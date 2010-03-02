@@ -36,6 +36,7 @@
 #include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/dev_namespace.h>
+#include <linux/pid_namespace.h>
 
 #include "binder.h"
 #include "binder_trace.h"
@@ -2566,7 +2567,7 @@ retry:
 		if (t->from) {
 			struct task_struct *sender = t->from->proc->tsk;
 			tr.sender_pid = task_tgid_nr_ns(sender,
-							current->nsproxy->pid_ns);
+							task_active_pid_ns(current));
 		} else {
 			tr.sender_pid = 0;
 		}
