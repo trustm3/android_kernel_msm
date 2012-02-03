@@ -105,6 +105,9 @@ struct work_struct {
 #ifdef CONFIG_LOCKDEP
 	struct lockdep_map lockdep_map;
 #endif
+#ifdef CONFIG_NAMESPACES
+	struct nsproxy *nsproxy;
+#endif
 };
 
 #define WORK_DATA_INIT()	ATOMIC_LONG_INIT(WORK_STRUCT_NO_POOL)
@@ -154,12 +157,19 @@ struct execute_work {
 #else
 #define __WORK_INIT_LOCKDEP_MAP(n, k)
 #endif
+#ifdef CONFIG_NAMESPACES
+#define __WORK_INIT_NSPROXY \
+	.nsproxy = NULL,
+#else
+#define __WORK_INIT_NSPROXY
+#endif
 
 #define __WORK_INITIALIZER(n, f) {					\
 	.data = WORK_DATA_STATIC_INIT(),				\
 	.entry	= { &(n).entry, &(n).entry },				\
 	.func = (f),							\
 	__WORK_INIT_LOCKDEP_MAP(#n, &(n))				\
+	__WORK_INIT_NSPROXY						\
 	}
 
 #define __DELAYED_WORK_INITIALIZER(n, f, tflags) {			\
@@ -209,6 +219,12 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
  * assignment of the work data initializer allows the compiler
  * to generate better code.
  */
+#ifdef CONFIG_NAMESPACES
+#define __INIT_WORK_NSPROXY(_work) \
+	(_work)->nsproxy = NULL;
+#else
+#define __INIT_WORK_NSPROXY(_work)
+#endif
 #ifdef CONFIG_LOCKDEP
 #define __INIT_WORK(_work, _func, _onstack)				\
 	do {								\
@@ -219,6 +235,7 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 		lockdep_init_map(&(_work)->lockdep_map, #_work, &__key, 0); \
 		INIT_LIST_HEAD(&(_work)->entry);			\
 		PREPARE_WORK((_work), (_func));				\
+		__INIT_WORK_NSPROXY(_work)				\
 	} while (0)
 #else
 #define __INIT_WORK(_work, _func, _onstack)				\
@@ -227,6 +244,7 @@ static inline unsigned int work_static(struct work_struct *work) { return 0; }
 		(_work)->data = (atomic_long_t) WORK_DATA_INIT();	\
 		INIT_LIST_HEAD(&(_work)->entry);			\
 		PREPARE_WORK((_work), (_func));				\
+		__INIT_WORK_NSPROXY(_work)				\
 	} while (0)
 #endif
 
@@ -428,6 +446,8 @@ extern bool queue_work_on(int cpu, struct workqueue_struct *wq,
 			struct work_struct *work);
 extern bool queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
 			struct delayed_work *work, unsigned long delay);
+extern int queue_work_in(struct nsproxy *nsproxy, struct workqueue_struct *wq,
+			 struct work_struct *work);
 extern bool mod_delayed_work_on(int cpu, struct workqueue_struct *wq,
 			struct delayed_work *dwork, unsigned long delay);
 
