@@ -29,6 +29,7 @@
 #include <linux/time.h>
 #include <linux/vmalloc.h>
 #include <linux/aio.h>
+#include <linux/dev_namespace.h>
 #include "logger.h"
 
 #include <asm/ioctls.h>
@@ -67,6 +68,12 @@ struct logger_log {
 
 static LIST_HEAD(log_list);
 
+/* logger_ver - returns reader ABI compatible version */
+#define logger_compat_ver(v)	((v) & 0x00FF)
+/* logger_ns_ver - returns reader ns aware version */
+#define logger_ns_ver(v)	((v) | 0x0100)
+/* logger_ns_info - returns true iff reader should get ns info */
+#define logger_ns_info(v)	((v) & 0x0100)
 
 /**
  * struct logger_reader - a logging device open for reading
@@ -85,6 +92,7 @@ struct logger_reader {
 	size_t			r_off;
 	bool			r_all;
 	int			r_ver;
+	pid_t			r_initpid; /* filter by devns initpid */
 };
 
 /* logger_offset - returns index 'n' into the log via (optimized) modulus */
@@ -159,10 +167,17 @@ static __u32 get_entry_msg_len(struct logger_log *log, size_t off)
 
 static size_t get_user_hdr_len(int ver)
 {
-	if (ver < 2)
-		return sizeof(struct user_logger_entry_compat);
-	else
+	switch (ver) {
+	case logger_compat_ver(1):
+		return sizeof(struct user_logger_entry_compat_v1);
+	case logger_ns_ver(1):
+		return sizeof(struct user_logger_entry_compat_ns_v1);
+	case logger_compat_ver(2):
+		return sizeof(struct user_logger_entry_compat_v2);
+	case logger_ns_ver(2):
+	default:
 		return sizeof(struct logger_entry);
+	}
 }
 
 static ssize_t copy_header_to_user(int ver, struct logger_entry *entry,
@@ -170,9 +185,15 @@ static ssize_t copy_header_to_user(int ver, struct logger_entry *entry,
 {
 	void *hdr;
 	size_t hdr_len;
-	struct user_logger_entry_compat v1;
+	struct user_logger_entry_compat_ns_v1 v1;
 
-	if (ver < 2) {
+	if (logger_compat_ver(ver) < 2) {
+		if (logger_ns_info(ver)) {
+			v1.ns_initpid  = entry->ns_initpid;
+			v1.ns_pid   = entry->ns_pid;
+			v1.ns_tid   = entry->ns_tid;
+			memcpy(v1.ns_tag, entry->ns_tag, DEV_NS_TAG_LEN);
+		}
 		v1.len      = entry->len;
 		v1.__pad    = 0;
 		v1.pid      = entry->pid;
@@ -180,11 +201,14 @@ static ssize_t copy_header_to_user(int ver, struct logger_entry *entry,
 		v1.sec      = entry->sec;
 		v1.nsec     = entry->nsec;
 		hdr         = &v1;
-		hdr_len     = sizeof(struct user_logger_entry_compat);
 	} else {
 		hdr         = entry;
-		hdr_len     = sizeof(struct logger_entry);
 	}
+
+	hdr_len = get_user_hdr_len(ver);
+	if (!logger_ns_info(ver))
+		/* skip the ns info header part */
+		hdr = &((struct logger_entry *)hdr)->len;
 
 	return copy_to_user(buf, hdr, hdr_len);
 }
@@ -242,12 +266,15 @@ static ssize_t do_read_log_to_user(struct logger_log *log,
 }
 
 /*
- * get_next_entry_by_uid - Starting at 'off', returns an offset into
+ * get_next_entry_by_ns_uid - Starting at 'off', returns an offset into
  * 'log->buffer' which contains the first entry readable by 'euid'
+ * in namespace of 'initpid'
  */
-static size_t get_next_entry_by_uid(struct logger_log *log,
-		size_t off, kuid_t euid)
+static size_t get_next_entry_by_ns_uid(struct logger_log *log,
+		size_t off, pid_t initpid, bool all)
 {
+	uid_t euid = current_euid();
+
 	while (off != log->w_off) {
 		struct logger_entry *entry;
 		struct logger_entry scratch;
@@ -255,7 +282,8 @@ static size_t get_next_entry_by_uid(struct logger_log *log,
 
 		entry = get_entry_header(log, off, &scratch);
 
-		if (uid_eq(entry->euid, euid))
+		if ((all || uid_eq(entry->euid, euid)) &&
+		    (!initpid || entry->ns_initpid == initpid))
 			return off;
 
 		next_len = sizeof(struct logger_entry) + entry->len;
@@ -315,9 +343,9 @@ start:
 
 	mutex_lock(&log->mutex);
 
-	if (!reader->r_all)
-		reader->r_off = get_next_entry_by_uid(log,
-			reader->r_off, current_euid());
+	if (!reader->r_all || reader->r_initpid)
+		reader->r_off = get_next_entry_by_ns_uid(log,
+			reader->r_off, reader->r_initpid, reader->r_all);
 
 	/* is there still something to read or did we race? */
 	if (unlikely(log->w_off == reader->r_off)) {
@@ -474,14 +502,24 @@ static ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 {
 	struct logger_log *log = file_get_log(iocb->ki_filp);
 	size_t orig;
+	struct dev_namespace *dev_ns = current_dev_ns();
 	struct logger_entry header;
 	struct timespec now;
 	ssize_t ret = 0;
 
 	now = current_kernel_time();
 
-	header.pid = current->tgid;
-	header.tid = current->pid;
+	BUG_ON(!dev_ns);
+
+	header.ns_initpid = dev_ns_init_pid(dev_ns);
+	if (header.ns_initpid > 1)
+		strncpy(header.ns_tag, dev_ns->tag, DEV_NS_TAG_LEN);
+	else
+		header.ns_tag[0] = '\0';
+	header.ns_pid = task_tgid_nr(current);
+	header.ns_tid = task_pid_nr(current);
+	header.pid = task_tgid_vnr(current);
+	header.tid = task_pid_vnr(current);
 	header.sec = now.tv_sec;
 	header.nsec = now.tv_nsec;
 	header.euid = current_euid();
@@ -563,15 +601,32 @@ static int logger_open(struct inode *inode, struct file *file)
 
 	if (file->f_mode & FMODE_READ) {
 		struct logger_reader *reader;
+		struct dev_namespace *dev_ns = current_dev_ns();
+
+		BUG_ON(!dev_ns);
+
+		if (file->f_flags & O_DIRECT && dev_ns != &init_dev_ns)
+			return -EPERM;
 
 		reader = kmalloc(sizeof(struct logger_reader), GFP_KERNEL);
 		if (!reader)
 			return -ENOMEM;
 
 		reader->log = log;
-		reader->r_ver = 1;
+		reader->r_ver = logger_compat_ver(1);
 		reader->r_all = in_egroup_p(inode->i_gid) ||
 			capable(CAP_SYSLOG);
+
+		if (file->f_flags & O_DIRECT) {
+			/* open in raw mode from root ns without filtering */
+			/* but clear flag before __dentry_open() sees it */
+			reader->r_initpid = 0;
+			reader->r_ver = logger_ns_ver(1);
+			file->f_flags &= ~O_DIRECT;
+		} else {
+			/* open logger in initpid filtering mode */
+			reader->r_initpid = dev_ns_init_pid(dev_ns);
+		}
 
 		INIT_LIST_HEAD(&reader->list);
 
@@ -632,9 +687,9 @@ static unsigned int logger_poll(struct file *file, poll_table *wait)
 	poll_wait(file, &log->wq, wait);
 
 	mutex_lock(&log->mutex);
-	if (!reader->r_all)
-		reader->r_off = get_next_entry_by_uid(log,
-			reader->r_off, current_euid());
+	if (!reader->r_all || reader->r_initpid)
+		reader->r_off = get_next_entry_by_ns_uid(log,
+			reader->r_off, reader->r_initpid, reader->r_all);
 
 	if (log->w_off != reader->r_off)
 		ret |= POLLIN | POLLRDNORM;
@@ -652,7 +707,11 @@ static long logger_set_version(struct logger_reader *reader, void __user *arg)
 	if ((version < 1) || (version > 2))
 		return -EINVAL;
 
-	reader->r_ver = version;
+	if (reader->r_initpid)
+		reader->r_ver = logger_compat_ver(version);
+	else
+		reader->r_ver = logger_ns_ver(version);
+
 	return 0;
 }
 
@@ -687,9 +746,10 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 		reader = file->private_data;
 
-		if (!reader->r_all)
-			reader->r_off = get_next_entry_by_uid(log,
-				reader->r_off, current_euid());
+		if (!reader->r_all || reader->r_initpid)
+			reader->r_off = get_next_entry_by_ns_uid(log,
+				reader->r_off, reader->r_initpid,
+				reader->r_all);
 
 		if (log->w_off != reader->r_off)
 			ret = get_user_hdr_len(reader->r_ver) +
@@ -718,7 +778,7 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 		}
 		reader = file->private_data;
-		ret = reader->r_ver;
+		ret = logger_compat_ver(reader->r_ver);
 		break;
 	case LOGGER_SET_VERSION:
 		if (!(file->f_mode & FMODE_READ)) {
@@ -727,6 +787,29 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 		reader = file->private_data;
 		ret = logger_set_version(reader, argp);
+		break;
+	case LOGGER_SET_DEV_NS_FILTER:
+		if (!(file->f_mode & FMODE_READ)) {
+			ret = -EBADF;
+			break;
+		}
+		if (current_dev_ns() != &init_dev_ns) {
+			ret = -EPERM;
+			break;
+		}
+		if ((pid_t) arg < 0) {  /* 0 for no filtering */
+			ret = -EINVAL;
+			break;
+		}
+		reader = file->private_data;
+		reader->r_initpid = (pid_t) arg;
+		if (arg)
+			reader->r_ver = logger_compat_ver(reader->r_ver);
+		else
+			reader->r_ver = logger_ns_ver(reader->r_ver);
+		pr_info("logger: set ns filter to %lu, ver=%x\n",
+			arg, reader->r_ver);
+		ret = 0;
 		break;
 	}
 
