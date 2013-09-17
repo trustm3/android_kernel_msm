@@ -51,21 +51,6 @@
 /* protects active namespace and switches */
 static DECLARE_RWSEM(global_dev_ns_lock);
 
-
-struct dev_namespace init_dev_ns = {
-	.active = true,
-	.count = ATOMIC_INIT(2),  /* extra reference for active_dev_ns */
-	.pid_ns = &init_pid_ns,
-	.notifiers = BLOCKING_NOTIFIER_INIT(init_dev_ns.notifiers),
-	.timestamp = 0,
-	.mutex = __MUTEX_INITIALIZER(init_dev_ns.mutex),
-};
-EXPORT_SYMBOL_GPL(init_dev_ns);
-
-
-struct dev_namespace *active_dev_ns = &init_dev_ns;
-
-
 static void dev_ns_lock(struct dev_namespace *dev_ns)
 {
 	mutex_lock(&dev_ns->mutex);
@@ -80,6 +65,8 @@ static struct dev_namespace *create_dev_ns(struct task_struct *task)
 {
 	struct dev_namespace *dev_ns;
 
+	static int s_ndev = 0;
+
 	dev_ns = kzalloc(sizeof(struct dev_namespace), GFP_KERNEL);
 	if (!dev_ns)
 		return ERR_PTR(-ENOMEM);
@@ -87,6 +74,9 @@ static struct dev_namespace *create_dev_ns(struct task_struct *task)
 	atomic_set(&dev_ns->count, 1);
 	BLOCKING_INIT_NOTIFIER_HEAD(&dev_ns->notifiers);
 	mutex_init(&dev_ns->mutex);
+	/* all new namespaces get a default tag */
+	snprintf(dev_ns->tag, DEV_NS_TAG_LEN, "dev_ns.%d", ++s_ndev);
+	dev_ns->tag[DEV_NS_TAG_LEN-1] = '\0';
 
 	dev_ns->pid_ns = get_pid_ns(task->nsproxy->pid_ns);
 
@@ -328,12 +318,14 @@ struct dev_ns_info *get_dev_ns_info(int dev_ns_id,
 
 struct dev_ns_info *get_dev_ns_info_task(int dev_ns_id, struct task_struct *tsk)
 {
-	struct dev_ns_info *dev_ns_info;
+	struct dev_ns_info *dev_ns_info = NULL;
 	struct dev_namespace *dev_ns;
 
 	dev_ns = get_dev_ns_by_task(tsk);
-	dev_ns_info = dev_ns ? get_dev_ns_info(dev_ns_id, dev_ns, 1, 1) : NULL;
-	put_dev_ns(dev_ns);
+	if (dev_ns) {
+		dev_ns_info = get_dev_ns_info(dev_ns_id, dev_ns, 1, 1);
+		put_dev_ns(dev_ns);
+	}
 
 	return dev_ns_info;
 }
