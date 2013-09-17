@@ -1,6 +1,11 @@
 /*
  * kernel/dev_namespace.c
  *
+ * Copyright (c) 2010-2011 Columbia University
+ * Authors:
+ *    Christoffer Dall <cdall@cs.columbia.edu>
+ *    Jeremy C. Andrus <jeremya@cs.columbia.edu>
+ *
  * Copyright (c) 2011-2013 Cellrox Ltd. Certain portions are copyrighted by
  * Columbia University. This program is free software licensed under the GNU
  * General Public License Version 2 (GPL 2). You can distribute it and/or
@@ -51,21 +56,6 @@
 /* protects active namespace and switches */
 static DECLARE_RWSEM(global_dev_ns_lock);
 
-
-struct dev_namespace init_dev_ns = {
-	.active = true,
-	.count = ATOMIC_INIT(2),  /* extra reference for active_dev_ns */
-	.pid_ns = &init_pid_ns,
-	.notifiers = BLOCKING_NOTIFIER_INIT(init_dev_ns.notifiers),
-	.timestamp = 0,
-	.mutex = __MUTEX_INITIALIZER(init_dev_ns.mutex),
-};
-EXPORT_SYMBOL_GPL(init_dev_ns);
-
-
-struct dev_namespace *active_dev_ns = &init_dev_ns;
-
-
 static void dev_ns_lock(struct dev_namespace *dev_ns)
 {
 	mutex_lock(&dev_ns->mutex);
@@ -76,9 +66,12 @@ static void dev_ns_unlock(struct dev_namespace *dev_ns)
 	mutex_unlock(&dev_ns->mutex);
 }
 
-static struct dev_namespace *create_dev_ns(struct task_struct *task)
+static struct dev_namespace *create_dev_ns(struct task_struct *task,
+					   struct pid_namespace *new_pidns)
 {
 	struct dev_namespace *dev_ns;
+
+	static int s_ndev = 0;
 
 	dev_ns = kzalloc(sizeof(struct dev_namespace), GFP_KERNEL);
 	if (!dev_ns)
@@ -87,14 +80,18 @@ static struct dev_namespace *create_dev_ns(struct task_struct *task)
 	atomic_set(&dev_ns->count, 1);
 	BLOCKING_INIT_NOTIFIER_HEAD(&dev_ns->notifiers);
 	mutex_init(&dev_ns->mutex);
+	/* all new namespaces get a default tag */
+	snprintf(dev_ns->tag, DEV_NS_TAG_LEN, "dev_ns.%d", ++s_ndev);
+	dev_ns->tag[DEV_NS_TAG_LEN-1] = '\0';
 
-	dev_ns->pid_ns = get_pid_ns(task->nsproxy->pid_ns);
+	dev_ns->pid_ns = get_pid_ns(new_pidns);
 
 	return dev_ns;
 }
 
 struct dev_namespace *copy_dev_ns(unsigned long flags,
-				  struct task_struct *task)
+				  struct task_struct *task,
+				  struct pid_namespace *new_pidns)
 {
 	struct dev_namespace *dev_ns = task->nsproxy->dev_ns;
 
@@ -105,15 +102,23 @@ struct dev_namespace *copy_dev_ns(unsigned long flags,
 	if (!(flags & CLONE_NEWPID))
 		return get_dev_ns(dev_ns);
 	else
-		return create_dev_ns(task);
+		return create_dev_ns(task, new_pidns);
 }
 
 void __put_dev_ns(struct dev_namespace *dev_ns)
 {
-	if (dev_ns) {
-		put_pid_ns(dev_ns->pid_ns);
-		kfree(dev_ns);
+	int n;
+
+	if (!dev_ns || dev_ns == &init_dev_ns)
+		return;
+
+	for (n = 0; n < DEV_NS_DESC_MAX; n++) {
+		if (dev_ns->info[n])
+			put_dev_ns_info(n, dev_ns->info[n], 0);
 	}
+
+	put_pid_ns(dev_ns->pid_ns);
+	kfree(dev_ns);
 }
 
 struct dev_namespace *get_dev_ns_by_task(struct task_struct *task)
@@ -195,6 +200,7 @@ void dev_ns_unregister_notify(struct dev_namespace *dev_ns,
 struct dev_ns_desc {
 	char *name;
 	struct dev_ns_ops *ops;
+	struct mutex mutex;
 	struct list_head head;
 };
 
@@ -225,6 +231,7 @@ int register_dev_ns_ops(char *name, struct dev_ns_ops *ops)
 		desc->name = name;
 		desc->ops = ops;
 		INIT_LIST_HEAD(&desc->head);
+		mutex_init(&desc->mutex);
 	}
 	spin_unlock(&dev_ns_desc_lock);
 
@@ -251,18 +258,24 @@ static struct dev_ns_info *new_dev_ns_info(int dev_ns_id,
 	pr_debug("dev_ns: [0x%p] new info %s\n", dev_ns, desc->name);
 
 	dev_ns_info = desc->ops->create(dev_ns);
-	if (!dev_ns_info)
+	if (IS_ERR_OR_NULL(dev_ns_info))
 		return NULL;
 
 	pr_debug("dev_ns: [0x%p] got info 0x%p\n", dev_ns, dev_ns_info);
 
 	dev_ns->info[dev_ns_id] = dev_ns_info;
-	dev_ns_info->dev_ns = get_dev_ns(dev_ns);
-	atomic_set(&dev_ns_info->count, 0);
+	/* take a reference for our dev_ns_info array */
+	atomic_set(&dev_ns_info->count, 1);
+	/*
+	 * don't take a reference here: we're contained by the dev_namespace
+	 * structure, and an extra reference to that structure would create a
+	 * circular dependecy resulting in memory that can never be free'd.
+	 */
+	dev_ns_info->dev_ns = dev_ns;
 
-	spin_lock(&dev_ns_desc_lock);
+	mutex_lock(&desc->mutex);
 	list_add(&dev_ns_info->list, &desc->head);
-	spin_unlock(&dev_ns_desc_lock);
+	mutex_unlock(&desc->mutex);
 
 	return dev_ns_info;
 }
@@ -270,17 +283,17 @@ static struct dev_ns_info *new_dev_ns_info(int dev_ns_id,
 /* this function is called with dev_ns_lock(dev_ns) held */
 static void del_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info)
 {
+	struct dev_ns_desc *desc = &dev_ns_desc[dev_ns_id];
 	struct dev_namespace *dev_ns = dev_ns_info->dev_ns;
 
 	pr_debug("dev_ns: [0x%p] destory info 0x%p\n", dev_ns, dev_ns_info);
 
-	spin_lock(&dev_ns_desc_lock);
-	list_del(&dev_ns_info->list);
 	dev_ns->info[dev_ns_id] = NULL;
-	spin_unlock(&dev_ns_desc_lock);
+	mutex_lock(&desc->mutex);
+	list_del(&dev_ns_info->list);
+	mutex_unlock(&desc->mutex);
 
 	dev_ns_desc[dev_ns_id].ops->release(dev_ns_info);
-	put_dev_ns(dev_ns);
 }
 
 /*
@@ -328,25 +341,21 @@ struct dev_ns_info *get_dev_ns_info(int dev_ns_id,
 
 struct dev_ns_info *get_dev_ns_info_task(int dev_ns_id, struct task_struct *tsk)
 {
-	struct dev_ns_info *dev_ns_info;
+	struct dev_ns_info *dev_ns_info = NULL;
 	struct dev_namespace *dev_ns;
 
 	dev_ns = get_dev_ns_by_task(tsk);
-	dev_ns_info = dev_ns ? get_dev_ns_info(dev_ns_id, dev_ns, 1, 1) : NULL;
-	put_dev_ns(dev_ns);
+	if (dev_ns) {
+		dev_ns_info = get_dev_ns_info(dev_ns_id, dev_ns, 1, 1);
+		put_dev_ns(dev_ns);
+	}
 
 	return dev_ns_info;
 }
 
 void put_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info, int lock)
 {
-	struct dev_namespace *dev_ns;
-
-	/*
-	 * keep extra reference, or else the concluding dev_ns_unlock()
-	 * could theoretically execute after the last dev_ns_put()..
-	 */
-	dev_ns = get_dev_ns(dev_ns_info->dev_ns);
+	struct dev_namespace *dev_ns = dev_ns_info->dev_ns;
 
 	if (lock) {
 		down_read(&global_dev_ns_lock);
@@ -362,8 +371,6 @@ void put_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info, int lock)
 		dev_ns_unlock(dev_ns);
 		up_read(&global_dev_ns_lock);
 	}
-
-	put_dev_ns(dev_ns);
 }
 
 /*
@@ -374,17 +381,16 @@ void put_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info, int lock)
 void loop_dev_ns_info(int dev_ns_id, void *ptr,
 		      void (*func)(struct dev_ns_info *dev_ns_info, void *ptr))
 {
-	struct dev_ns_desc *desc;
+	struct dev_ns_desc *desc = &dev_ns_desc[dev_ns_id];
 	struct dev_ns_info *dev_ns_info;
 
-	spin_lock(&dev_ns_desc_lock);
-	desc = &dev_ns_desc[dev_ns_id];
+	mutex_lock(&desc->mutex);
 	list_for_each_entry(dev_ns_info, &desc->head, list) {
 		pr_debug("dev_ns: loop info 0x%p (dev_ns 0x%p) of %s\n",
 			 dev_ns_info, dev_ns_info->dev_ns, desc->name);
 		(*func)(dev_ns_info, ptr);
 	}
-	spin_unlock(&dev_ns_desc_lock);
+	mutex_unlock(&desc->mutex);
 }
 
 /**
