@@ -70,18 +70,16 @@ struct user_logger_entry_compat_v2 {
 	char		msg[0];		/* the entry's payload */
 };
 
-#define DEV_NS_TAG_LEN 4  /* see dev_namespace.h */
-
 /* The structure for version 1 of the namespace-aware logger_entry ABI */
 struct user_logger_entry_compat_ns_v1 {
-	__s32		ns_initpid;/* generating process's device ns initpid */
-	__s32		ns_pid;	/* generating process's real pid */
-	__s32		ns_tid;	/* generating process's real tid */
-	char		ns_tag[DEV_NS_TAG_LEN]; /* device ns identifier */
 	__u16		len;	/* length of the payload */
 	__u16		__pad;	/* no matter what, we get 2 bytes of padding */
 	__s32		pid;	/* generating process's pid */
 	__s32		tid;	/* generating process's tid */
+	__s32		ns_initpid;/* generating process's device ns initpid */
+	__s32		ns_pid;	/* generating process's real pid */
+	__s32		ns_tid;	/* generating process's real tid */
+	char		ns_tag[DEV_NS_TAG_LEN]; /* device ns identifier */
 	__s32		sec;	/* seconds since Epoch */
 	__s32		nsec;	/* nanoseconds */
 	char		msg[0];	/* the entry's payload */
@@ -89,14 +87,14 @@ struct user_logger_entry_compat_ns_v1 {
 
 /* The structure for version 2 of the namespace-aware logger_entry ABI */
 struct logger_entry {
-	__s32		ns_initpid;	/* generating process's devns initpid */
-	__s32		ns_pid;		/* generating process's real pid */
-	__s32		ns_tid;		/* generating process's real tid */
-	char		ns_tag[DEV_NS_TAG_LEN]; /* device ns identifier */
 	__u16		len;
 	__u16		hdr_size;
 	__s32		pid;
 	__s32		tid;
+	__s32		ns_initpid;	/* generating process's devns initpid */
+	__s32		ns_pid;		/* generating process's real pid */
+	__s32		ns_tid;		/* generating process's real tid */
+	char		ns_tag[DEV_NS_TAG_LEN]; /* device ns identifier */
 	__s32		sec;
 	__s32		nsec;
 	kuid_t		euid;

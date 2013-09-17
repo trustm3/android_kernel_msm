@@ -99,13 +99,11 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 		goto out_net;
 	}
 
-	new_nsp->dev_ns = copy_dev_ns(flags, tsk);
+	new_nsp->dev_ns = copy_dev_ns(flags, tsk, new_nsp->pid_ns);
 	if (IS_ERR(new_nsp->dev_ns)) {
 		err = PTR_ERR(new_nsp->dev_ns);
 		goto out_dev;
 	}
-
-	new_nsp->dev_ns->pid_ns = new_nsp->pid_ns;
 
 	return new_nsp;
 
