@@ -195,6 +195,7 @@ void dev_ns_unregister_notify(struct dev_namespace *dev_ns,
 struct dev_ns_desc {
 	char *name;
 	struct dev_ns_ops *ops;
+	struct mutex mutex;
 	struct list_head head;
 };
 
@@ -225,6 +226,7 @@ int register_dev_ns_ops(char *name, struct dev_ns_ops *ops)
 		desc->name = name;
 		desc->ops = ops;
 		INIT_LIST_HEAD(&desc->head);
+		mutex_init(&desc->mutex);
 	}
 	spin_unlock(&dev_ns_desc_lock);
 
@@ -266,9 +268,9 @@ static struct dev_ns_info *new_dev_ns_info(int dev_ns_id,
 	 */
 	dev_ns_info->dev_ns = dev_ns;
 
-	spin_lock(&dev_ns_desc_lock);
+	mutex_lock(&desc->mutex);
 	list_add(&dev_ns_info->list, &desc->head);
-	spin_unlock(&dev_ns_desc_lock);
+	mutex_unlock(&desc->mutex);
 
 	return dev_ns_info;
 }
@@ -276,14 +278,15 @@ static struct dev_ns_info *new_dev_ns_info(int dev_ns_id,
 /* this function is called with dev_ns_lock(dev_ns) held */
 static void del_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info)
 {
+	struct dev_ns_desc *desc = &dev_ns_desc[dev_ns_id];
 	struct dev_namespace *dev_ns = dev_ns_info->dev_ns;
 
 	pr_debug("dev_ns: [0x%p] destory info 0x%p\n", dev_ns, dev_ns_info);
 
-	spin_lock(&dev_ns_desc_lock);
-	list_del(&dev_ns_info->list);
 	dev_ns->info[dev_ns_id] = NULL;
-	spin_unlock(&dev_ns_desc_lock);
+	mutex_lock(&desc->mutex);
+	list_del(&dev_ns_info->list);
+	mutex_unlock(&desc->mutex);
 
 	dev_ns_desc[dev_ns_id].ops->release(dev_ns_info);
 }
@@ -373,17 +376,16 @@ void put_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info, int lock)
 void loop_dev_ns_info(int dev_ns_id, void *ptr,
 		      void (*func)(struct dev_ns_info *dev_ns_info, void *ptr))
 {
-	struct dev_ns_desc *desc;
+	struct dev_ns_desc *desc = &dev_ns_desc[dev_ns_id];
 	struct dev_ns_info *dev_ns_info;
 
-	spin_lock(&dev_ns_desc_lock);
-	desc = &dev_ns_desc[dev_ns_id];
+	mutex_lock(&desc->mutex);
 	list_for_each_entry(dev_ns_info, &desc->head, list) {
 		pr_debug("dev_ns: loop info 0x%p (dev_ns 0x%p) of %s\n",
 			 dev_ns_info, dev_ns_info->dev_ns, desc->name);
 		(*func)(dev_ns_info, ptr);
 	}
-	spin_unlock(&dev_ns_desc_lock);
+	mutex_unlock(&desc->mutex);
 }
 
 /**
