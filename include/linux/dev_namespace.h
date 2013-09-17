@@ -26,7 +26,7 @@
 
 #ifdef __KERNEL__
 
-#define DEV_NS_TAG_LEN 4
+#define DEV_NS_TAG_LEN 16
 #define DEV_NS_DESC_MAX 16
 
 struct dev_namespace;
@@ -52,6 +52,9 @@ struct dev_ns_info {
 	atomic_t count;
 };
 
+extern struct dev_namespace init_dev_ns;
+extern struct dev_namespace *active_dev_ns;
+
 #ifdef CONFIG_DEV_NS
 
 struct dev_ns_ops {
@@ -62,9 +65,6 @@ struct dev_ns_ops {
 /* device namespace notifications */
 #define DEV_NS_EVENT_ACTIVATE		0x1
 #define DEV_NS_EVENT_DEACTIVATE		0x2
-
-extern struct dev_namespace init_dev_ns;
-extern struct dev_namespace *active_dev_ns;
 
 extern void __put_dev_ns(struct dev_namespace *dev_ns);
 
@@ -83,7 +83,8 @@ static inline struct dev_namespace *get_dev_ns(struct dev_namespace *dev_ns)
 /* return the device namespaces of the current process */
 static inline struct dev_namespace *current_dev_ns(void)
 {
-	BUG_ON(in_interrupt());
+	if (in_interrupt())
+		return &init_dev_ns;
 	return current->nsproxy->dev_ns;
 }
 
@@ -200,15 +201,18 @@ extern void loop_dev_ns_info(int ns_id, void *ptr,
 
 #else  /* !CONFIG_DEV_NS */
 
-/* appease static assignment in kernel/nsproxy.c */
-#define init_dev_ns (*(struct dev_namespace *) NULL)
-
 /*
  * Driver authors should use this macro instead if !CONFIG_DEV_NS:
  * DEFINE_DEV_NS_INIT(X): put_X_ns(), get_X_ns(), get_X_ns_cur()
  */
 #define DEFINE_DEV_NS_INIT(x) \
-	struct x ## _dev_ns init_ ## x ## _ns; \
+	struct x ## _dev_ns init_ ## x ## _ns = { \
+		.dev_ns_info = { \
+			.dev_ns = &init_dev_ns, \
+			.list = LIST_HEAD_INIT(init_ ## x ## _ns.dev_ns_info.list), \
+			.count = ATOMIC_INIT(1), \
+		}, \
+	}; \
 	static inline \
 	struct x ## _dev_ns *find_ ## x ## _ns(struct dev_namespace *dev_ns) \
 	{ return &init_ ## x ## _ns; } \
@@ -218,6 +222,15 @@ extern void loop_dev_ns_info(int ns_id, void *ptr,
 	{ return &init_ ## x ## _ns; } \
 	static inline void put_ ## x ## _ns(struct x ## _dev_ns *x ## _ns) \
 	{ /* */ }
+
+static inline void put_dev_ns(struct dev_namespace *dev_ns)
+{ /* */ }
+
+static inline struct dev_namespace *get_dev_ns(struct dev_namespace *dev_ns)
+{ return dev_ns; }
+
+static inline bool is_active_dev_ns(struct dev_namespace *dev_ns)
+{ return true; }
 
 static inline struct dev_namespace *current_dev_ns(void)
 { return &init_dev_ns; }
@@ -235,7 +248,7 @@ static inline pid_t dev_ns_init_pid(struct dev_namespace *dev_ns)
 	return init_task.pid;
 }
 
-static inline get_dev_ns_tag(char *to, struct dev_namespace *dev_ns)
+static inline void get_dev_ns_tag(char *to, struct dev_namespace *dev_ns)
 {
 	strcpy(to, "");
 }
