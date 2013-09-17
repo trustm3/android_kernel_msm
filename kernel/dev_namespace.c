@@ -61,7 +61,8 @@ static void dev_ns_unlock(struct dev_namespace *dev_ns)
 	mutex_unlock(&dev_ns->mutex);
 }
 
-static struct dev_namespace *create_dev_ns(struct task_struct *task)
+static struct dev_namespace *create_dev_ns(struct task_struct *task,
+					   struct pid_namespace *new_pidns)
 {
 	struct dev_namespace *dev_ns;
 
@@ -78,13 +79,14 @@ static struct dev_namespace *create_dev_ns(struct task_struct *task)
 	snprintf(dev_ns->tag, DEV_NS_TAG_LEN, "dev_ns.%d", ++s_ndev);
 	dev_ns->tag[DEV_NS_TAG_LEN-1] = '\0';
 
-	dev_ns->pid_ns = get_pid_ns(task->nsproxy->pid_ns);
+	dev_ns->pid_ns = get_pid_ns(new_pidns);
 
 	return dev_ns;
 }
 
 struct dev_namespace *copy_dev_ns(unsigned long flags,
-				  struct task_struct *task)
+				  struct task_struct *task,
+				  struct pid_namespace *new_pidns)
 {
 	struct dev_namespace *dev_ns = task->nsproxy->dev_ns;
 
@@ -95,15 +97,23 @@ struct dev_namespace *copy_dev_ns(unsigned long flags,
 	if (!(flags & CLONE_NEWPID))
 		return get_dev_ns(dev_ns);
 	else
-		return create_dev_ns(task);
+		return create_dev_ns(task, new_pidns);
 }
 
 void __put_dev_ns(struct dev_namespace *dev_ns)
 {
-	if (dev_ns) {
-		put_pid_ns(dev_ns->pid_ns);
-		kfree(dev_ns);
+	int n;
+
+	if (!dev_ns || dev_ns == &init_dev_ns)
+		return;
+
+	for (n = 0; n < DEV_NS_DESC_MAX; n++) {
+		if (dev_ns->info[n])
+			put_dev_ns_info(n, dev_ns->info[n], 0);
 	}
+
+	put_pid_ns(dev_ns->pid_ns);
+	kfree(dev_ns);
 }
 
 struct dev_namespace *get_dev_ns_by_task(struct task_struct *task)
@@ -247,8 +257,14 @@ static struct dev_ns_info *new_dev_ns_info(int dev_ns_id,
 	pr_debug("dev_ns: [0x%p] got info 0x%p\n", dev_ns, dev_ns_info);
 
 	dev_ns->info[dev_ns_id] = dev_ns_info;
-	dev_ns_info->dev_ns = get_dev_ns(dev_ns);
-	atomic_set(&dev_ns_info->count, 0);
+	/* take a reference for our dev_ns_info array */
+	atomic_set(&dev_ns_info->count, 1);
+	/*
+	 * don't take a reference here: we're contained by the dev_namespace
+	 * structure, and an extra reference to that structure would create a
+	 * circular dependecy resulting in memory that can never be free'd.
+	 */
+	dev_ns_info->dev_ns = dev_ns;
 
 	spin_lock(&dev_ns_desc_lock);
 	list_add(&dev_ns_info->list, &desc->head);
@@ -270,7 +286,6 @@ static void del_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info)
 	spin_unlock(&dev_ns_desc_lock);
 
 	dev_ns_desc[dev_ns_id].ops->release(dev_ns_info);
-	put_dev_ns(dev_ns);
 }
 
 /*
@@ -332,13 +347,7 @@ struct dev_ns_info *get_dev_ns_info_task(int dev_ns_id, struct task_struct *tsk)
 
 void put_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info, int lock)
 {
-	struct dev_namespace *dev_ns;
-
-	/*
-	 * keep extra reference, or else the concluding dev_ns_unlock()
-	 * could theoretically execute after the last dev_ns_put()..
-	 */
-	dev_ns = get_dev_ns(dev_ns_info->dev_ns);
+	struct dev_namespace *dev_ns = dev_ns_info->dev_ns;
 
 	if (lock) {
 		down_read(&global_dev_ns_lock);
@@ -354,8 +363,6 @@ void put_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info, int lock)
 		dev_ns_unlock(dev_ns);
 		up_read(&global_dev_ns_lock);
 	}
-
-	put_dev_ns(dev_ns);
 }
 
 /*

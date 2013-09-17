@@ -120,7 +120,8 @@ extern void dev_ns_unregister_notify(struct dev_namespace *dev_ns,
 				     struct notifier_block *nb);
 
 extern struct dev_namespace *copy_dev_ns(unsigned long flags,
-					 struct task_struct *task);
+					 struct task_struct *task,
+					 struct pid_namespace *new_pidns);
 
 /* helpers for per-driver logic of device namespace */
 
@@ -236,7 +237,8 @@ static inline struct dev_namespace *current_dev_ns(void)
 { return &init_dev_ns; }
 
 static inline struct dev_namespace *copy_dev_ns(unsigned long flags,
-						struct task_struct *task)
+						struct task_struct *task,
+						struct pid_namespace *new_pidns)
 {
 	if (flags & CLONE_NEWPID)
 		return ERR_PTR(-EINVAL);
