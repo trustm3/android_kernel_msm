@@ -253,7 +253,7 @@ static struct dev_ns_info *new_dev_ns_info(int dev_ns_id,
 	pr_debug("dev_ns: [0x%p] new info %s\n", dev_ns, desc->name);
 
 	dev_ns_info = desc->ops->create(dev_ns);
-	if (!dev_ns_info)
+	if (IS_ERR_OR_NULL(dev_ns_info))
 		return NULL;
 
 	pr_debug("dev_ns: [0x%p] got info 0x%p\n", dev_ns, dev_ns_info);
