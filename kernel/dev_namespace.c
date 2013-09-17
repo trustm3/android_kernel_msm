@@ -1,6 +1,11 @@
 /*
  * kernel/dev_namespace.c
  *
+ * Copyright (c) 2010-2011 Columbia University
+ * Authors:
+ *    Christoffer Dall <cdall@cs.columbia.edu>
+ *    Jeremy C. Andrus <jeremya@cs.columbia.edu>
+ *
  * Copyright (c) 2011-2013 Cellrox Ltd. Certain portions are copyrighted by
  * Columbia University. This program is free software licensed under the GNU
  * General Public License Version 2 (GPL 2). You can distribute it and/or
