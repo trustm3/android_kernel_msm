@@ -82,10 +82,20 @@ static void msm_sensor_delay_frames(struct msm_sensor_ctrl_t *s_ctrl)
 
 	if (s_ctrl->curr_res < MSM_SENSOR_INVALID_RES &&
 		s_ctrl->wait_num_frames > 0) {
-		fps = s_ctrl->msm_sensor_reg->
-			output_settings[s_ctrl->curr_res].vt_pixel_clk /
-			s_ctrl->curr_frame_length_lines /
-			s_ctrl->curr_line_length_pclk;
+	        if (s_ctrl->curr_frame_length_lines != 0 &&
+		    s_ctrl->curr_line_length_pclk != 0) {
+			fps = s_ctrl->msm_sensor_reg->
+				output_settings[s_ctrl->curr_res].vt_pixel_clk /
+				s_ctrl->curr_frame_length_lines /
+				s_ctrl->curr_line_length_pclk;
+		} else {
+			fps = 0;
+			pr_info("%s: curr_frame_length_lines=%d, "
+				"curr_line_length_pclk=%d, "
+				"... using min_delay\n", __func__,
+				s_ctrl->curr_frame_length_lines,
+				s_ctrl->curr_line_length_pclk);
+		}
 		if (fps == 0)
 			delay = s_ctrl->min_delay;
 		else
