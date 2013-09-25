@@ -856,7 +856,7 @@ static int msm_mctl_dev_open(struct file *f)
 	pmctl = msm_cam_server_get_mctl(pcam->mctl_handle);
 	if (!pmctl) {
 		pr_err("%s mctl NULL!\n", __func__);
-		return rc;
+		return -EINVAL;
 	}
 
 	D("%s active %d\n", __func__, pcam->mctl_node.active);
@@ -916,6 +916,15 @@ static int msm_mctl_dev_close(struct file *f)
 	struct msm_cam_v4l2_device *pcam;
 	struct msm_cam_v4l2_dev_inst *pcam_inst;
 	struct msm_cam_media_controller *pmctl;
+
+	if (!f) {
+		pr_err("%s: filp is NULL\n", __func__);
+		return -EINVAL;
+	}
+	if (!f->private_data) {
+		pr_err("%s: filp->private_data is NULL\n", __func__);
+		return -EINVAL;
+	}
 	pcam_inst = container_of(f->private_data,
 		struct msm_cam_v4l2_dev_inst, eventHandle);
 	pcam = pcam_inst->pcam;
