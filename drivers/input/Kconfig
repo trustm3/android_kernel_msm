@@ -200,6 +200,15 @@ config SENSORS_HALL
 	 Say y here if you want to use this hall sensor driver, it
 	 is like a switch. For example, lid.
 
+config INPUT_DEV_NS
+       bool "Input device namespace"
+       depends on INPUT
+       depends on DEV_NS
+       default n
+       ---help---
+         Enables device namespace logic to the input subsystem to multiplex
+         inputs events. If unsure, say N.
+
 comment "Input Device Drivers"
 
 source "drivers/input/keyboard/Kconfig"

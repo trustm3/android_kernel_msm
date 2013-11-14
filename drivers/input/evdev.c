@@ -8,7 +8,7 @@
  * the Free Software Foundation.
  */
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 #define DEBUG
 #define DEV_NS_EVDEV_DEBUG
 
@@ -20,7 +20,7 @@
 #define pr_fmt(fmt) \
 	"[%d] devns:evdev: " fmt, current->pid
 #endif
-#endif /* CONFIG_DEV_NS */
+#endif /* CONFIG_INPUT_DEV_NS */
 
 #ifndef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -43,7 +43,7 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/wakelock.h>
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 #include <linux/dev_namespace.h>
 #endif
 
@@ -62,7 +62,7 @@ struct evdev {
 	bool exist;
 };
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 struct evdev_dev_ns;
 #endif
 
@@ -74,7 +74,7 @@ struct evdev_client {
 	struct wake_lock wake_lock;
 	bool use_wake_lock;
 	char name[44];
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	struct evdev_dev_ns *evdev_ns;
 	struct list_head list;
 	bool grab;
@@ -104,7 +104,7 @@ struct evdev_client {
  * are forced and become real.
  */
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 struct evdev_dev_ns {
 	struct mutex mutex;
 	struct list_head clients;
@@ -241,7 +241,7 @@ static int evdev_ns_switch_callback(struct notifier_block *self,
 static struct notifier_block evdev_ns_switch_notifier = {
 	.notifier_call = evdev_ns_switch_callback,
 };
-#endif /* CONFIG_DEV_NS */
+#endif /* CONFIG_INPUT_DEV_NS */
 
 static void __pass_event(struct evdev_client *client,
 			 const struct input_event *event)
@@ -325,7 +325,7 @@ static void evdev_events(struct input_handle *handle,
 		evdev_pass_values(client, vals, count, time_mono, time_real);
 	else
 		list_for_each_entry_rcu(client, &evdev->client_list, node) {
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 			if (!evdev_client_is_active(client))
 				continue;
 #endif
@@ -396,7 +396,7 @@ static int evdev_grab(struct evdev *evdev, struct evdev_client *client)
 	if (error)
 		return error;
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	client->grab = true;
 #endif
 	rcu_assign_pointer(evdev->grab, client);
@@ -412,7 +412,7 @@ static int evdev_ungrab(struct evdev *evdev, struct evdev_client *client)
 	if (grab != client)
 		return  -EINVAL;
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	client->grab = false;
 #endif
 	rcu_assign_pointer(evdev->grab, NULL);
@@ -494,7 +494,7 @@ static int evdev_release(struct inode *inode, struct file *file)
 	evdev_ungrab(evdev, client);
 	mutex_unlock(&evdev->mutex);
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	evdev_ns_untrack_client(client);
 #endif
 
@@ -539,14 +539,14 @@ static int evdev_open(struct inode *inode, struct file *file)
 	spin_lock_init(&client->buffer_lock);
 	i = snprintf(client->name, sizeof(client->name), "%s-%d",
 			dev_name(&evdev->dev), task_tgid_vnr(current));
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	/* uniquely identify evdev across device namespace */
 	snprintf(client->name + i, sizeof(client->name) - i, "[ns:%d]",
 		 dev_ns_init_pid(current_dev_ns()));
 #endif
 	client->evdev = evdev;
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	error = evdev_ns_track_client(client);
 	if (error)
 		goto err_free_client;
@@ -565,7 +565,7 @@ static int evdev_open(struct inode *inode, struct file *file)
 
  err_detach_client:
 	evdev_detach_client(evdev, client);
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	evdev_ns_untrack_client(client);
  err_free_client:
 #endif
@@ -601,7 +601,7 @@ static ssize_t evdev_write(struct file *file, const char __user *buffer,
 		}
 		retval += input_event_size();
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client))
 			continue;
 #endif
@@ -986,7 +986,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 		if (get_user(v, ip + 1))
 			return -EFAULT;
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client))
 			return 0;
 #endif
@@ -996,7 +996,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 		return 0;
 
 	case EVIOCRMFF:
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client))
 			return 0;
 #endif
@@ -1010,7 +1010,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 		return 0;
 
 	case EVIOCGRAB:
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client)) {
 			if (p)
 				client->grab = true;
@@ -1036,7 +1036,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 		return evdev_handle_get_keycode(dev, p);
 
 	case EVIOCSKEYCODE:
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client))
 			return 0;
 #endif
@@ -1093,7 +1093,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 		return str_to_user(dev->uniq, size, p);
 
 	case EVIOC_MASK_SIZE(EVIOCSFF):
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client))
 			return 0;
 #endif
@@ -1137,7 +1137,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 
 	if (_IOC_DIR(cmd) == _IOC_WRITE) {
 
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 		if (!evdev_client_is_active(client))
 			return 0;
 #endif
@@ -1366,7 +1366,7 @@ static int __init evdev_init(void)
 	ret = input_register_handler(&evdev_handler);
 	if (ret < 0)
 		return ret;
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	ret = DEV_NS_REGISTER(evdev, "event dev");
 	if (ret < 0) {
 		input_unregister_handler(&evdev_handler);
@@ -1378,7 +1378,7 @@ static int __init evdev_init(void)
 
 static void __exit evdev_exit(void)
 {
-#ifdef CONFIG_DEV_NS
+#ifdef CONFIG_INPUT_DEV_NS
 	DEV_NS_UNREGISTER(evdev);
 #endif
 	input_unregister_handler(&evdev_handler);
