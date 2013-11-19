@@ -32,6 +32,7 @@
 #include <linux/device.h>
 #include <linux/efi.h>
 #include <linux/fb.h>
+#include <linux/dev_namespace.h>
 
 #include <asm/fb.h>
 
@@ -1213,6 +1214,12 @@ static long fb_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	if (!info)
 		return -ENODEV;
+
+	if (!is_active_dev_ns(current_dev_ns())) {
+		pr_info("%s:%p:%d:%d(%s): ignore cmd=%#x\n", __func__, info, current->tgid, current->parent->pid, current->comm, cmd);
+		return -EPERM;
+	}
+
 	return do_fb_ioctl(info, cmd, arg);
 }
 
