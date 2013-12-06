@@ -3649,8 +3649,13 @@ static void __binder_state_show(struct dev_ns_info *dev_ns_info, void *data)
 	binder_ns = container_of(dev_ns_info, struct binder_dev_ns,
 				 dev_ns_info);
 
-	snprintf(str, sizeof(str),
-		 "binder state (0x%p):\n", dev_ns_info->dev_ns);
+	if (dev_ns_info->dev_ns) {
+		snprintf(str, sizeof(str), "binder state (%s at 0x%p):\n",
+			 dev_ns_info->dev_ns->tag ?
+			 dev_ns_info->dev_ns->tag : "", dev_ns_info->dev_ns);
+	} else {
+		snprintf(str, sizeof(str), "binder state:\n");
+	}
 	seq_puts(m, str);
 
 	if (!hlist_empty(&binder_ns->dead_nodes))
@@ -3690,8 +3695,14 @@ static void __binder_stats_show(struct dev_ns_info *dev_ns_info, void *data)
 	binder_ns = container_of(dev_ns_info, struct binder_dev_ns,
 				 dev_ns_info);
 
-	snprintf(str, sizeof(str),
-		 "binder stats (0x%p):\n", dev_ns_info->dev_ns);
+	if (dev_ns_info->dev_ns) {
+		snprintf(str, sizeof(str),
+			 "binder stats (%s at 0x%p):\n",
+			 dev_ns_info->dev_ns->tag ?
+			 dev_ns_info->dev_ns->tag : "", dev_ns_info->dev_ns);
+	} else {
+		snprintf(str, sizeof(str), "binder stats:\n");
+	}
 	seq_puts(m, str);
 
 	print_binder_stats(m, "", &binder_stats);
@@ -3729,8 +3740,14 @@ static void __binder_transaction_show(struct dev_ns_info *dev_ns_info,
 	binder_ns = container_of(dev_ns_info, struct binder_dev_ns,
 				 dev_ns_info);
 
-	snprintf(str, sizeof(str),
-		 "binder transactions (0x%p):\n", dev_ns_info->dev_ns);
+	if (dev_ns_info->dev_ns) {
+		snprintf(str, sizeof(str),
+			 "binder transactions (%s at 0x%p):\n",
+			 dev_ns_info->dev_ns->tag ?
+			 dev_ns_info->dev_ns->tag : "", dev_ns_info->dev_ns);
+	} else {
+		snprintf(str, sizeof(str), "binder transactions:\n");
+	}
 	seq_puts(m, str);
 
 	hlist_for_each_entry(proc, pos, &binder_ns->procs, proc_node)
