@@ -3619,7 +3619,7 @@ static int binder_state_show(struct seq_file *m, void *unused)
 	int do_lock = !binder_debug_no_lock;
 
 	if (do_lock)
-		binder_lock(__func__);
+		mutex_lock(&binder_lock);
 
 #ifdef CONFIG_DEV_NS
 	loop_dev_ns_info(binder_ns_id, m, __binder_state_show);
