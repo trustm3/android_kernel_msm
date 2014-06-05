@@ -38,6 +38,8 @@
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
 
+#include <linux/dev_namespace.h>
+
 #include "core.h"
 #include "bus.h"
 #include "host.h"
@@ -119,7 +121,17 @@ MODULE_PARM_DESC(
 static int mmc_schedule_delayed_work(struct delayed_work *work,
 				     unsigned long delay)
 {
-	return queue_delayed_work(workqueue, work, delay);
+	struct dev_namespace *ns = current_dev_ns();
+	struct nsproxy *nsp = NULL;
+
+	if (ns == &init_dev_ns) {
+		pr_info("%s:%s: delayed work delay %ld\n", __func__, ns->tag, delay);
+		return queue_delayed_work(workqueue, work, delay);
+	} else {
+		pr_info("%s:%s: work_in delay %ld\n", __func__, ns->tag, delay);
+		nsp = dev_ns_nsproxy(ns);
+		return queue_work_in(nsp, workqueue, &work->work);
+	}
 }
 
 /*
