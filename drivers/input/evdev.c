@@ -120,6 +120,11 @@ static bool evdev_client_is_active(struct evdev_client *client)
 	return is_active_dev_ns(client->evdev_ns->dev_ns_info.dev_ns);
 }
 
+static bool evdev_client_from_cml(struct evdev_client *client)
+{
+	return client->evdev_ns->dev_ns_info.dev_ns == &init_dev_ns;
+}
+
 static struct notifier_block evdev_ns_switch_notifier;
 static int evdev_grab(struct evdev *evdev, struct evdev_client *client);
 static int evdev_ungrab(struct evdev *evdev, struct evdev_client *client);
@@ -308,11 +313,15 @@ static void evdev_pass_values(struct evdev_client *client,
  * Pass incoming events to all connected clients.
  */
 static void evdev_events(struct input_handle *handle,
-			 const struct input_value *vals, unsigned int count)
+			 struct input_value *vals, unsigned int count)
 {
 	struct evdev *evdev = handle->private;
 	struct evdev_client *client;
 	ktime_t time_mono, time_real;
+#ifdef CONFIG_INPUT_DEV_NS
+	/* Power button events should go to the init namespace */
+	int is_power_button = (vals[0].type == EV_KEY && vals[0].code == KEY_POWER);
+#endif
 
 	time_mono = ktime_get();
 	time_real = ktime_sub(time_mono, ktime_get_monotonic_offset());
@@ -326,11 +335,26 @@ static void evdev_events(struct input_handle *handle,
 	else
 		list_for_each_entry_rcu(client, &evdev->client_list, node) {
 #ifdef CONFIG_INPUT_DEV_NS
-			if (!evdev_client_is_active(client))
+			if (is_power_button) {
+				if (!evdev_client_from_cml(client))
+					continue;
+			} else if (!evdev_client_is_active(client)) {
 				continue;
+			}
 #endif
 			evdev_pass_values(client, vals, count,
 					  time_mono, time_real);
+
+#ifdef CONFIG_INPUT_DEV_NS
+			/* Add sync event */
+			if (is_power_button) {
+				vals[0].type = EV_SYN;
+				vals[0].code = SYN_REPORT;
+				vals[0].value = 0;
+				evdev_pass_values(client, vals, count,
+						  time_mono, time_real);
+			}
+#endif
 		}
 
 	rcu_read_unlock();
