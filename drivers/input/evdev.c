@@ -122,6 +122,11 @@ static bool evdev_client_is_active(struct evdev_client *client)
 	return is_active_dev_ns(client->evdev_ns->dev_ns_info.dev_ns);
 }
 
+static bool evdev_client_from_cml(struct evdev_client *client)
+{
+	return client->evdev_ns->dev_ns_info.dev_ns == &init_dev_ns;
+}
+
 static struct notifier_block evdev_ns_switch_notifier;
 static int evdev_grab(struct evdev *evdev, struct evdev_client *client);
 static int evdev_ungrab(struct evdev *evdev, struct evdev_client *client);
@@ -295,6 +300,10 @@ static void evdev_event(struct input_handle *handle,
 	struct evdev_client *client;
 	struct input_event event;
 	ktime_t time_mono, time_real;
+#ifdef CONFIG_INPUT_DEV_NS
+	/* Power button events should go to the init namespace */
+	int is_power_button = (type == EV_KEY && code == KEY_POWER);
+#endif
 
 	if (type == EV_SYN && code == SYN_TIME_SEC) {
 		evdev->hw_ts_sec = value;
@@ -325,10 +334,24 @@ static void evdev_event(struct input_handle *handle,
 	else
 		list_for_each_entry_rcu(client, &evdev->client_list, node) {
 #ifdef CONFIG_INPUT_DEV_NS
-			if (!evdev_client_is_active(client))
+			if (is_power_button) {
+				if (!evdev_client_from_cml(client))
+					continue;
+			} else if (!evdev_client_is_active(client)) {
 				continue;
+			}
 #endif
 			evdev_pass_event(client, &event, time_mono, time_real);
+
+#ifdef CONFIG_INPUT_DEV_NS
+			/* Add sync event */
+			if (is_power_button) {
+				event.type = EV_SYN;
+				event.code = SYN_REPORT;
+				event.value = 0;
+				evdev_pass_event(client, &event, time_mono, time_real);
+			}
+#endif
 		}
 
 	rcu_read_unlock();
