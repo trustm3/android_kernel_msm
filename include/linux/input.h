@@ -717,6 +717,8 @@ struct input_keymap_entry {
 #define KEY_CAMERA_LEFT		0x219
 #define KEY_CAMERA_RIGHT	0x21a
 
+#define KEY_POWER_INJECT	0x21d
+
 #define BTN_DPAD_UP		0x220
 #define BTN_DPAD_DOWN		0x221
 #define BTN_DPAD_LEFT		0x222
