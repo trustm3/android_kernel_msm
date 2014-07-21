@@ -287,7 +287,7 @@ struct input_handler {
 
 	void (*event)(struct input_handle *handle, unsigned int type, unsigned int code, int value);
 	void (*events)(struct input_handle *handle,
-		       const struct input_value *vals, unsigned int count);
+		       struct input_value *vals, unsigned int count);
 	bool (*filter)(struct input_handle *handle, unsigned int type, unsigned int code, int value);
 	bool (*match)(struct input_handler *handler, struct input_dev *dev);
 	int (*connect)(struct input_handler *handler, struct input_dev *dev, const struct input_device_id *id);
