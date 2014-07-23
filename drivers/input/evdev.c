@@ -59,6 +59,10 @@ struct evdev {
 	bool exist;
 	int hw_ts_sec;
 	int hw_ts_nsec;
+#ifdef CONFIG_INPUT_DEV_NS
+	int pb_pressed_short;
+	struct timer_list pb_timer;
+#endif
 };
 
 #ifdef CONFIG_INPUT_DEV_NS
@@ -120,11 +124,6 @@ DEFINE_DEV_NS_INFO(evdev)
 static bool evdev_client_is_active(struct evdev_client *client)
 {
 	return is_active_dev_ns(client->evdev_ns->dev_ns_info.dev_ns);
-}
-
-static bool evdev_client_from_cml(struct evdev_client *client)
-{
-	return client->evdev_ns->dev_ns_info.dev_ns == &init_dev_ns;
 }
 
 static struct notifier_block evdev_ns_switch_notifier;
@@ -290,6 +289,97 @@ static void evdev_pass_event(struct evdev_client *client,
 	spin_unlock(&client->buffer_lock);
 }
 
+#ifdef CONFIG_INPUT_DEV_NS
+enum {
+	PASS_TO_NONE = 0,
+	PASS_TO_CML,
+	PASS_TO_A0,
+	PASS_TO_AX,
+};
+
+static bool evdev_client_from_cml(struct evdev_client *client)
+{
+	return client->evdev_ns->dev_ns_info.dev_ns == &init_dev_ns;
+}
+
+static bool evdev_client_from_a0(struct evdev_client *client)
+{
+	return !strncmp(client->evdev_ns->dev_ns_info.dev_ns->tag, "a0", 2);
+}
+
+static void evdev_pb_pressed_timeout(unsigned long data)
+{
+	struct evdev *evdev = (struct evdev *)data;
+
+	pr_info("pressed_short=%d\n", evdev->pb_pressed_short);
+	evdev->pb_pressed_short = 0;
+}
+
+/*
+ * Pass incoming power button events to the forseen container
+ */
+static void evdev_pass_pb_event(struct evdev *evdev,
+				struct input_event *event,
+				ktime_t time_mono, ktime_t time_real)
+{
+	struct evdev_client *client;
+	int pass_to = PASS_TO_NONE;
+	int value = event->value;
+
+	/* Button presses come from the active container */
+	if (!strncmp(active_dev_ns->tag, "a0", 2)) {
+		pr_info("pass to a0\n");
+		pass_to = PASS_TO_A0;
+	} else { /* CML or AX */
+		if (value == 1) { /* button down */
+			evdev->pb_timer.expires = jiffies + HZ / 2;
+			evdev->pb_pressed_short = 1;
+			add_timer(&evdev->pb_timer);
+			pr_info("timer started\n");
+		} else  { /* button up */
+			if (evdev->pb_pressed_short) { /* short press */
+				pr_info("stop timer and pass to a1/2\n");
+				evdev->pb_pressed_short = 0;
+				del_timer(&evdev->pb_timer);
+				pass_to = PASS_TO_AX;
+			} else { /* long press */
+				pr_info("pass to cml\n");
+				pass_to = PASS_TO_CML;
+			}
+		}
+	}
+
+	if (pass_to == PASS_TO_NONE)
+		return;
+
+	list_for_each_entry_rcu(client, &evdev->client_list, node) {
+		if (pass_to == PASS_TO_A0) {
+			if (!evdev_client_from_a0(client) ||
+			    !evdev_client_is_active(client))
+				continue;
+			evdev_pass_event(client, event, time_mono, time_real);
+			pr_info("passed to %s\n",
+				client->evdev_ns->dev_ns_info.dev_ns->tag);
+		} else { /* to a1/2 or cml */
+			if (pass_to == PASS_TO_AX &&
+			    (evdev_client_from_a0(client) ||
+			     !evdev_client_is_active(client)))
+				continue;
+			if (pass_to == PASS_TO_CML &&
+			    !evdev_client_from_cml(client))
+				continue;
+			event->value = 1;
+			evdev_pass_event(client, event, time_mono, time_real);
+			event->value = 0;
+			evdev_pass_event(client, event, time_mono, time_real);
+			pr_info("passed to %s\n",
+				client->evdev_ns->dev_ns_info.dev_ns->tag);
+			break;
+		}
+	}
+}
+#endif /* CONFIG_INPUT_DEV_NS */
+
 /*
  * Pass incoming event to all connected clients.
  */
@@ -300,10 +390,6 @@ static void evdev_event(struct input_handle *handle,
 	struct evdev_client *client;
 	struct input_event event;
 	ktime_t time_mono, time_real;
-#ifdef CONFIG_INPUT_DEV_NS
-	/* Power button events should go to the init namespace */
-	int is_power_button = (type == EV_KEY && code == KEY_POWER);
-#endif
 
 	if (type == EV_SYN && code == SYN_TIME_SEC) {
 		evdev->hw_ts_sec = value;
@@ -329,29 +415,18 @@ static void evdev_event(struct input_handle *handle,
 
 	client = rcu_dereference(evdev->grab);
 
+
+#ifdef CONFIG_INPUT_DEV_NS
+	if (type == EV_KEY && code == KEY_POWER)
+		evdev_pass_pb_event(evdev, &event, time_mono, time_real);
+	else
+#endif
 	if (client)
 		evdev_pass_event(client, &event, time_mono, time_real);
 	else
 		list_for_each_entry_rcu(client, &evdev->client_list, node) {
-#ifdef CONFIG_INPUT_DEV_NS
-			if (is_power_button) {
-				if (!evdev_client_from_cml(client))
-					continue;
-			} else if (!evdev_client_is_active(client)) {
-				continue;
-			}
-#endif
 			evdev_pass_event(client, &event, time_mono, time_real);
 
-#ifdef CONFIG_INPUT_DEV_NS
-			/* Add sync event */
-			if (is_power_button) {
-				event.type = EV_SYN;
-				event.code = SYN_REPORT;
-				event.value = 0;
-				evdev_pass_event(client, &event, time_mono, time_real);
-			}
-#endif
 		}
 
 	rcu_read_unlock();
@@ -1323,6 +1398,12 @@ static int evdev_connect(struct input_handler *handler, struct input_dev *dev,
 	evdev->minor = minor;
 	evdev->hw_ts_sec = -1;
 	evdev->hw_ts_nsec = -1;
+
+#ifdef CONFIG_INPUT_DEV_NS
+	/* Power button handler */
+	setup_timer(&evdev->pb_timer, evdev_pb_pressed_timeout,
+		    (unsigned long)evdev);
+#endif
 
 	evdev->handle.dev = input_get_device(dev);
 	evdev->handle.name = dev_name(&evdev->dev);
