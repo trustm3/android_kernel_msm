@@ -372,6 +372,14 @@ static void evdev_pass_pb_event(struct evdev *evdev,
 			evdev_pass_event(client, event, time_mono, time_real);
 			event->value = 0;
 			evdev_pass_event(client, event, time_mono, time_real);
+			if (pass_to == PASS_TO_CML) {
+				struct input_event e = {.type = EV_SYN,
+							.code = SYN_REPORT,
+							.value = 0,
+							.time = event->time};
+				evdev_pass_event(client, &e, time_mono,
+						 time_real);
+			}
 			pr_info("passed to %s\n",
 				client->evdev_ns->dev_ns_info.dev_ns->tag);
 			break;
@@ -425,8 +433,11 @@ static void evdev_event(struct input_handle *handle,
 		evdev_pass_event(client, &event, time_mono, time_real);
 	else
 		list_for_each_entry_rcu(client, &evdev->client_list, node) {
+#ifdef CONFIG_INPUT_DEV_NS
+			if (!evdev_client_is_active(client))
+				continue;
+#endif
 			evdev_pass_event(client, &event, time_mono, time_real);
-
 		}
 
 	rcu_read_unlock();
