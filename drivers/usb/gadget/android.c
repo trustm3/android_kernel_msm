@@ -27,6 +27,8 @@
 #include <linux/pm_qos.h>
 #include <linux/of.h>
 
+#include <linux/dev_namespace.h>
+
 #include <linux/usb/ch9.h>
 #include <linux/usb/composite.h>
 #include <linux/usb/gadget.h>
@@ -3104,6 +3106,9 @@ static ssize_t remote_wakeup_store(struct device *pdev,
 	struct android_configuration *conf;
 	int enable = 0;
 
+	if (current_dev_ns() != &init_dev_ns)
+		return -EACCES;
+
 	sscanf(buff, "%d", &enable);
 
 	pr_debug("android_usb: %s remote wakeup\n",
@@ -3161,6 +3166,9 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 	int err;
 	int is_ffs;
 	int ffs_enabled = 0;
+
+	if (current_dev_ns() != &init_dev_ns)
+		return -EACCES;
 
 	mutex_lock(&dev->mutex);
 
@@ -3270,6 +3278,9 @@ static ssize_t enable_store(struct device *pdev, struct device_attribute *attr,
 	static DEFINE_RATELIMIT_STATE(rl, 10*HZ, 1);
 	int err = 0;
 
+	if (current_dev_ns() != &init_dev_ns)
+		return -EACCES;
+
 	if (!cdev)
 		return -ENODEV;
 
@@ -3346,6 +3357,9 @@ static ssize_t pm_qos_store(struct device *pdev,
 {
 	struct android_dev *dev = dev_get_drvdata(pdev);
 
+	if (current_dev_ns() != &init_dev_ns)
+		return -EACCES;
+
 	strlcpy(dev->pm_qos, buff, sizeof(dev->pm_qos));
 
 	return size;
@@ -3419,6 +3433,8 @@ field ## _store(struct device *dev, struct device_attribute *attr,	\
 		const char *buf, size_t size)				\
 {									\
 	int value;							\
+	if (current_dev_ns() != &init_dev_ns)				\
+		return -EACCES;						\
 	if (sscanf(buf, format_string, &value) == 1) {			\
 		device_desc.field = value;				\
 		return size;						\
@@ -3438,6 +3454,8 @@ static ssize_t								\
 field ## _store(struct device *dev, struct device_attribute *attr,	\
 		const char *buf, size_t size)				\
 {									\
+	if (current_dev_ns() != &init_dev_ns)				\
+		return -EACCES;						\
 	if (size >= sizeof(buffer))					\
 		return -EINVAL;						\
 	strlcpy(buffer, buf, sizeof(buffer));				\
