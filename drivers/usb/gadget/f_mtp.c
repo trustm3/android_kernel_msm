@@ -36,6 +36,8 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/f_mtp.h>
 
+#include <linux/dev_namespace.h>
+
 #define MTP_BULK_BUFFER_SIZE       16384
 #define INTR_BUFFER_SIZE           28
 
@@ -1074,6 +1076,10 @@ out:
 static int mtp_open(struct inode *ip, struct file *fp)
 {
 	printk(KERN_INFO "mtp_open\n");
+
+	if (current_dev_ns() != &init_dev_ns)
+		return -EBUSY;
+
 	if (mtp_lock(&_mtp_dev->open_excl))
 		return -EBUSY;
 
