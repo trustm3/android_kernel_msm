@@ -292,7 +292,6 @@ static void evdev_pass_event(struct evdev_client *client,
 #ifdef CONFIG_INPUT_DEV_NS
 enum {
 	PASS_TO_NONE = 0,
-	PASS_TO_CML,
 	PASS_TO_A0,
 	PASS_TO_AX,
 };
@@ -307,12 +306,55 @@ static bool evdev_client_from_a0(struct evdev_client *client)
 	return !strncmp(client->evdev_ns->dev_ns_info.dev_ns->tag, "a0", 2);
 }
 
+/*
+ * Timer callback for long pb button presses in aX. In case of a long pb press,
+ * signalize to evdev that the button was pressed long and switch back to a0.
+ */
 static void evdev_pb_pressed_timeout(unsigned long data)
 {
+	struct evdev_client *client;
 	struct evdev *evdev = (struct evdev *)data;
+	ktime_t time_mono, time_real;
 
-	pr_info("pressed_short=%d\n", evdev->pb_pressed_short);
+	// syn event to be passed after key events to seperate events,
+	// as key events seem to occur at the same time.
+	struct input_event evt_syn;
+	struct input_event event;
+
+	// set short press flag to false, as timer expired
+	pr_info("pressed_short==%d, set to 0\n", evdev->pb_pressed_short);
 	evdev->pb_pressed_short = 0;
+
+	time_mono = ktime_get();
+	time_real = ktime_sub(time_mono, ktime_get_monotonic_offset());
+
+	// other attributes are set later
+	event.type = EV_KEY;
+	event.code = KEY_POWER;
+	evt_syn.type = EV_SYN;
+	evt_syn.code = SYN_REPORT;
+
+	pr_info("pass to cmld (init)\n");
+	rcu_read_lock();
+	list_for_each_entry_rcu(client, &evdev->client_list, node) {
+
+		if (!evdev_client_from_cml(client))
+			continue;
+
+		event.value = 1;
+		evdev_pass_event(client, &event, time_mono, time_real);
+		event.value = 0;
+		evdev_pass_event(client, &event, time_mono, time_real);
+		evt_syn.value = 0;
+		evdev_pass_event(client, &evt_syn, time_mono, time_real);
+
+		pr_info("passed to %s\n", client->evdev_ns->dev_ns_info.dev_ns->tag);
+		break;
+	}
+	rcu_read_unlock();
+
+	wake_up_interruptible(&evdev->wait);
+	del_timer(&evdev->pb_timer);
 }
 
 /*
@@ -327,10 +369,10 @@ static void evdev_pass_pb_event(struct evdev *evdev,
 	int value = event->value;
 
 	/* Button presses come from the active container */
-	if (!strncmp(active_dev_ns->tag, "a0", 2)) {
+	if (!strncmp(active_dev_ns->tag, "a0", 2)) { /* A0 */
 		pr_info("pass to a0\n");
 		pass_to = PASS_TO_A0;
-	} else { /* CML or AX */
+	} else { /* AX */
 		if (value == 1) { /* button down */
 			evdev->pb_timer.expires = jiffies + HZ / 2;
 			evdev->pb_pressed_short = 1;
@@ -338,48 +380,39 @@ static void evdev_pass_pb_event(struct evdev *evdev,
 			pr_info("timer started\n");
 		} else  { /* button up */
 			if (evdev->pb_pressed_short) { /* short press */
-				pr_info("stop timer and pass to a1/2\n");
+				pr_info("stop timer and pass to aX\n");
 				evdev->pb_pressed_short = 0;
 				del_timer(&evdev->pb_timer);
 				pass_to = PASS_TO_AX;
-			} else { /* long press */
-				pr_info("pass to cml\n");
-				pass_to = PASS_TO_CML;
 			}
 		}
 	}
 
+	/* button down in aX or long press (long press is handled in timer callback)
+	 * button up events are determinative for aX/cmld. We forge the
+	 * correspdonding messages when we pass events to aX/cmld */
 	if (pass_to == PASS_TO_NONE)
 		return;
 
+	// rc_read_(un)lock in calling function
 	list_for_each_entry_rcu(client, &evdev->client_list, node) {
-		if (pass_to == PASS_TO_A0) {
+		if (pass_to == PASS_TO_A0) { /* just forward to a0 */
 			if (!evdev_client_from_a0(client) ||
 			    !evdev_client_is_active(client))
 				continue;
 			evdev_pass_event(client, event, time_mono, time_real);
+
 			pr_info("passed to %s\n",
 				client->evdev_ns->dev_ns_info.dev_ns->tag);
-		} else { /* to a1/2 or cml */
-			if (pass_to == PASS_TO_AX &&
-			    (evdev_client_from_a0(client) ||
-			     !evdev_client_is_active(client)))
-				continue;
-			if (pass_to == PASS_TO_CML &&
-			    !evdev_client_from_cml(client))
+		} else if (pass_to == PASS_TO_AX) { /* inform aX in userspace */
+			if (evdev_client_from_a0(client) ||
+			     !evdev_client_is_active(client))
 				continue;
 			event->value = 1;
 			evdev_pass_event(client, event, time_mono, time_real);
 			event->value = 0;
 			evdev_pass_event(client, event, time_mono, time_real);
-			if (pass_to == PASS_TO_CML) {
-				struct input_event e = {.type = EV_SYN,
-							.code = SYN_REPORT,
-							.value = 0,
-							.time = event->time};
-				evdev_pass_event(client, &e, time_mono,
-						 time_real);
-			}
+
 			pr_info("passed to %s\n",
 				client->evdev_ns->dev_ns_info.dev_ns->tag);
 			break;
