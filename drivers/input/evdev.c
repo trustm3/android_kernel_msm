@@ -114,15 +114,16 @@ struct evdev_dev_ns {
 /* evdev_ns_id, get_evdev_ns(), get_evdev_ns_cur(), put_evdev_ns() */
 DEFINE_DEV_NS_INFO(evdev)
 
-/* indicate whether an evdev client is in the foreground */
-static bool evdev_client_is_active(struct evdev_client *client)
-{
-	return is_active_dev_ns(client->evdev_ns->dev_ns_info.dev_ns);
-}
-
-static bool evdev_client_from_cml(struct evdev_client *client)
+static bool evdev_client_from_init_dev_ns(struct evdev_client *client)
 {
 	return client->evdev_ns->dev_ns_info.dev_ns == &init_dev_ns;
+}
+
+/* indicate whether an evdev client is in the foreground or the init_dev_ns
+ * this returns true for the active (foreground) dev_ns and always for the init_dev_ns */
+static bool evdev_client_is_active(struct evdev_client *client)
+{
+	return (is_active_dev_ns(client->evdev_ns->dev_ns_info.dev_ns) || evdev_client_from_init_dev_ns(client));
 }
 
 static struct notifier_block evdev_ns_switch_notifier;
@@ -319,43 +320,60 @@ static void evdev_events(struct input_handle *handle,
 	struct evdev_client *client;
 	ktime_t time_mono, time_real;
 #ifdef CONFIG_INPUT_DEV_NS
+	bool grabbed = false;
 	/* Power button events should go to the init namespace */
 	int is_power_button = (vals[0].type == EV_KEY && vals[0].code == KEY_POWER);
+	int is_power_inject = (vals[0].type == EV_KEY && vals[0].code == KEY_POWER_INJECT);
 #endif
 
 	time_mono = ktime_get();
 	time_real = ktime_sub(time_mono, ktime_get_monotonic_offset());
 
+#ifdef CONFIG_INPUT_DEV_NS
+	if (is_power_inject) {
+		/* rewrite code to a normal power event */
+		vals[0].code = KEY_POWER;
+		//pr_info("received KEY_POWER_INJECT event from input_handle: %s and input_dev: %s\n", handle->name,
+		//		handle->dev->name);
+	}
+#endif
+
 	rcu_read_lock();
 
 	client = rcu_dereference(evdev->grab);
 
-	if (client)
-		evdev_pass_values(client, vals, count, time_mono, time_real);
+	if (client) {
+#ifdef CONFIG_INPUT_DEV_NS
+		/* This means the device is grabbed */
+		grabbed = true;
+		/* filter power button events for all events which are not
+		 * from init_dev_ns */
+		if ((is_power_button && !evdev_client_from_init_dev_ns(client))
+				/* filter power inject events for all clients from init_dev_ns */
+				|| (is_power_inject && evdev_client_from_init_dev_ns(client))) {
+			/* do nothing */
+		} else
+#endif
+			evdev_pass_values(client, vals, count, time_mono, time_real);
+	}
+#ifndef CONFIG_INPUT_DEV_NS
 	else
-		list_for_each_entry_rcu(client, &evdev->client_list, node) {
-#ifdef CONFIG_INPUT_DEV_NS
-			if (is_power_button) {
-				if (!evdev_client_from_cml(client))
-					continue;
-			} else if (!evdev_client_is_active(client)) {
-				continue;
-			}
 #endif
-			evdev_pass_values(client, vals, count,
-					  time_mono, time_real);
-
+	list_for_each_entry_rcu(client, &evdev->client_list, node) {
 #ifdef CONFIG_INPUT_DEV_NS
-			/* Add sync event */
-			if (is_power_button) {
-				vals[0].type = EV_SYN;
-				vals[0].code = SYN_REPORT;
-				vals[0].value = 0;
-				evdev_pass_values(client, vals, count,
-						  time_mono, time_real);
-			}
+		/* filter power button events for all events which are not
+		 * from init_dev_ns */
+		if ((is_power_button && !evdev_client_from_init_dev_ns(client))
+				/* filter power inject events for all clients from init_dev_ns */
+				|| (is_power_inject && evdev_client_from_init_dev_ns(client))
+				/* filter all non-active clients except init_dev_ns (especially important for syn events)*/
+				|| (!evdev_client_is_active(client))
+				/* filter all clients from inside a container if the device was grabbed*/
+				|| (grabbed && !evdev_client_from_init_dev_ns(client)))
+			continue;
 #endif
-		}
+		evdev_pass_values(client, vals, count, time_mono, time_real);
+	}
 
 	rcu_read_unlock();
 }
