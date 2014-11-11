@@ -1,0 +1,9 @@
+config SECURITY_TRUSTME
+	bool "trustme LSM support"
+	depends on SECURITY
+	select SECURITY_PATH
+	default y
+	help
+	  This selects the trustme LSM used for enforcing container separation.
+
+	  If you are unsure how to answer this question, answer N.
