@@ -96,19 +96,11 @@ static void apparmor_cred_transfer(struct cred *new, const struct cred *old)
 static int apparmor_ptrace_access_check(struct task_struct *child,
 					unsigned int mode)
 {
-	int error = cap_ptrace_access_check(child, mode);
-	if (error)
-		return error;
-
 	return aa_ptrace(current, child, mode);
 }
 
 static int apparmor_ptrace_traceme(struct task_struct *parent)
 {
-	int error = cap_ptrace_traceme(parent);
-	if (error)
-		return error;
-
 	return aa_ptrace(parent, current, PTRACE_MODE_ATTACH);
 }
 
@@ -123,10 +115,10 @@ static int apparmor_capget(struct task_struct *target, kernel_cap_t *effective,
 	cred = __task_cred(target);
 	profile = aa_cred_profile(cred);
 
-	*effective = cred->cap_effective;
-	*inheritable = cred->cap_inheritable;
-	*permitted = cred->cap_permitted;
-
+	/*
+	 * cap_capget is stacked ahead of this and will
+	 * initialize effective and permitted.
+	 */
 	if (!unconfined(profile) && !COMPLAIN_MODE(profile)) {
 		*effective = cap_intersect(*effective, profile->caps.allow);
 		*permitted = cap_intersect(*permitted, profile->caps.allow);
@@ -140,13 +132,11 @@ static int apparmor_capable(const struct cred *cred, struct user_namespace *ns,
 			    int cap, int audit)
 {
 	struct aa_profile *profile;
-	/* cap_capable returns 0 on success, else -EPERM */
-	int error = cap_capable(cred, ns, cap, audit);
-	if (!error) {
-		profile = aa_cred_profile(cred);
-		if (!unconfined(profile))
-			error = aa_capable(current, profile, cap, audit);
-	}
+	int error = 0;
+
+	profile = aa_cred_profile(cred);
+	if (!unconfined(profile))
+		error = aa_capable(profile, cap, audit);
 	return error;
 }
 

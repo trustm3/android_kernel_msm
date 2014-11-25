@@ -160,10 +160,6 @@ static int smack_ptrace_access_check(struct task_struct *ctp, unsigned int mode)
 	struct smk_audit_info ad;
 	char *tsp;
 
-	rc = cap_ptrace_access_check(ctp, mode);
-	if (rc != 0)
-		return rc;
-
 	tsp = smk_of_task(task_security(ctp));
 	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_TASK);
 	smk_ad_setfield_u_tsk(&ad, ctp);
@@ -185,10 +181,6 @@ static int smack_ptrace_traceme(struct task_struct *ptp)
 	int rc;
 	struct smk_audit_info ad;
 	char *tsp;
-
-	rc = cap_ptrace_traceme(ptp);
-	if (rc != 0)
-		return rc;
 
 	tsp = smk_of_task(task_security(ptp));
 	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_TASK);
@@ -459,10 +451,6 @@ static int smack_bprm_set_creds(struct linux_binprm *bprm)
 	struct inode_smack *isp;
 	int rc;
 
-	rc = cap_bprm_set_creds(bprm);
-	if (rc != 0)
-		return rc;
-
 	if (bprm->cred_prepared)
 		return 0;
 
@@ -472,9 +460,6 @@ static int smack_bprm_set_creds(struct linux_binprm *bprm)
 
 	if (bprm->unsafe)
 		return -EPERM;
-
-	bsp->smk_task = isp->smk_task;
-	bprm->per_clear |= PER_CLEAR_ON_SETID;
 
 	return 0;
 }
@@ -502,12 +487,11 @@ static void smack_bprm_committing_creds(struct linux_binprm *bprm)
 static int smack_bprm_secureexec(struct linux_binprm *bprm)
 {
 	struct task_smack *tsp = current_security();
-	int ret = cap_bprm_secureexec(bprm);
 
-	if (!ret && (tsp->smk_task != tsp->smk_forked))
-		ret = 1;
+	if (tsp->smk_task != tsp->smk_forked)
+		return 1;
 
-	return ret;
+	return 0;
 }
 
 /*
@@ -1576,12 +1560,7 @@ static void smack_task_getsecid(struct task_struct *p, u32 *secid)
  */
 static int smack_task_setnice(struct task_struct *p, int nice)
 {
-	int rc;
-
-	rc = cap_task_setnice(p, nice);
-	if (rc == 0)
-		rc = smk_curacc_on_task(p, MAY_WRITE, __func__);
-	return rc;
+	return smk_curacc_on_task(p, MAY_WRITE, __func__);
 }
 
 /**
@@ -1593,12 +1572,7 @@ static int smack_task_setnice(struct task_struct *p, int nice)
  */
 static int smack_task_setioprio(struct task_struct *p, int ioprio)
 {
-	int rc;
-
-	rc = cap_task_setioprio(p, ioprio);
-	if (rc == 0)
-		rc = smk_curacc_on_task(p, MAY_WRITE, __func__);
-	return rc;
+	return smk_curacc_on_task(p, MAY_WRITE, __func__);
 }
 
 /**
@@ -1622,12 +1596,7 @@ static int smack_task_getioprio(struct task_struct *p)
  */
 static int smack_task_setscheduler(struct task_struct *p)
 {
-	int rc;
-
-	rc = cap_task_setscheduler(p);
-	if (rc == 0)
-		rc = smk_curacc_on_task(p, MAY_WRITE, __func__);
-	return rc;
+	return smk_curacc_on_task(p, MAY_WRITE, __func__);
 }
 
 /**

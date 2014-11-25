@@ -26,6 +26,8 @@
 #include <linux/capability.h>
 #include <linux/slab.h>
 #include <linux/err.h>
+#include <linux/string.h>
+#include <linux/mm.h>
 
 struct linux_binprm;
 struct cred;
@@ -97,6 +99,8 @@ extern int cap_task_setioprio(struct task_struct *p, int ioprio);
 extern int cap_task_setnice(struct task_struct *p, int nice);
 extern int cap_vm_enough_memory(struct mm_struct *mm, long pages);
 
+extern struct security_operations capability_ops;
+
 struct msghdr;
 struct sk_buff;
 struct sock;
@@ -112,7 +116,9 @@ struct seq_file;
 
 extern int cap_netlink_send(struct sock *sk, struct sk_buff *skb);
 
-void reset_security_ops(void);
+#ifdef CONFIG_SECURITY_SELINUX_DISABLE
+void security_module_disable(struct security_operations *);
+#endif
 
 #ifdef CONFIG_MMU
 extern unsigned long mmap_min_addr;
@@ -1288,10 +1294,11 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@tz contains new timezone
  *	Return 0 if permission is granted.
  * @vm_enough_memory:
- *	Check permissions for allocating a new virtual mapping.
+ *	Check whether the permission check for allocating a new virtual
+ *	mapping should be done with privilege.
  *	@mm contains the mm struct it is being added to.
  *	@pages contains the number of pages.
- *	Return 0 if permission is granted.
+ *	Return 0 if permission should be checked without CAP_SYS_ADMIN
  *
  * @secid_to_secctx:
  *	Convert secid to security context.  If secdata is NULL the length of
@@ -1935,7 +1942,7 @@ static inline int security_settime(const struct timespec *ts,
 
 static inline int security_vm_enough_memory_mm(struct mm_struct *mm, long pages)
 {
-	return cap_vm_enough_memory(mm, pages);
+	return __vm_enough_memory(mm, pages, cap_vm_enough_memory(mm, pages));
 }
 
 static inline int security_bprm_set_creds(struct linux_binprm *bprm)
@@ -3051,5 +3058,8 @@ static inline void free_secdata(void *secdata)
 { }
 #endif /* CONFIG_SECURITY */
 
-#endif /* ! __LINUX_SECURITY_H */
+#ifdef CONFIG_SECURITY_YAMA_STACKED
+extern struct security_operations yama_ops;
+#endif
 
+#endif /* ! __LINUX_SECURITY_H */
