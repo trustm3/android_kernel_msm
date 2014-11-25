@@ -954,7 +954,7 @@ int cap_vm_enough_memory(struct mm_struct *mm, long pages)
 	if (cap_capable(current_cred(), &init_user_ns, CAP_SYS_ADMIN,
 			SECURITY_CAP_NOAUDIT) == 0)
 		cap_sys_admin = 1;
-	return __vm_enough_memory(mm, pages, cap_sys_admin);
+	return cap_sys_admin;
 }
 
 /*
@@ -986,3 +986,34 @@ int cap_file_mmap(struct file *file, unsigned long reqprot,
 	}
 	return ret;
 }
+EXPORT_SYMBOL(cap_file_mmap);
+
+#ifdef CONFIG_SECURITY
+
+struct security_operations capability_ops = {
+	.name =			"capability",
+	.capable =		cap_capable,
+	.settime =		cap_settime,
+	.ptrace_access_check =	cap_ptrace_access_check,
+	.ptrace_traceme =	cap_ptrace_traceme,
+	.capget =		cap_capget,
+	.capset =		cap_capset,
+	.bprm_set_creds =	cap_bprm_set_creds,
+	.bprm_secureexec =	cap_bprm_secureexec,
+	/*
+	 * Not stacked in the usual way.
+	 * .inode_setxattr =	cap_inode_setxattr,
+	 * .inode_removexattr =	cap_inode_removexattr,
+	 */
+	.inode_need_killpriv =	cap_inode_need_killpriv,
+	.inode_killpriv =	cap_inode_killpriv,
+	.file_mmap =		cap_file_mmap,
+	.task_fix_setuid =	cap_task_fix_setuid,
+	.task_prctl =		cap_task_prctl,
+	.task_setscheduler =	cap_task_setscheduler,
+	.task_setioprio =	cap_task_setioprio,
+	.task_setnice =		cap_task_setnice,
+	.vm_enough_memory =	cap_vm_enough_memory,
+};
+
+#endif /* CONFIG_SECURITY */

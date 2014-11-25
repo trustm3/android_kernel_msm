@@ -114,12 +114,8 @@ static void yama_task_free(struct task_struct *task)
 static int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 			   unsigned long arg4, unsigned long arg5)
 {
-	int rc;
+	int rc = 0;
 	struct task_struct *myself = current;
-
-	rc = cap_task_prctl(option, arg2, arg3, arg4, arg5);
-	if (rc != -ENOSYS)
-		return rc;
 
 	switch (option) {
 	case PR_SET_PTRACER:
@@ -241,21 +237,61 @@ static int ptracer_exception_found(struct task_struct *tracer,
 static int yama_ptrace_access_check(struct task_struct *child,
 				    unsigned int mode)
 {
-	int rc;
-
-	/* If standard caps disallows it, so does Yama.  We should
-	 * only tighten restrictions further.
-	 */
-	rc = cap_ptrace_access_check(child, mode);
-	if (rc)
-		return rc;
+	int rc = 0;
 
 	/* require ptrace target be a child of ptracer on attach */
-	if (mode == PTRACE_MODE_ATTACH &&
-	    ptrace_scope &&
-	    !task_is_descendant(current, child) &&
-	    !ptracer_exception_found(current, child) &&
-	    !capable(CAP_SYS_PTRACE))
+	if (mode == PTRACE_MODE_ATTACH) {
+		switch (ptrace_scope) {
+		case YAMA_SCOPE_DISABLED:
+			/* No additional restrictions. */
+			break;
+		case YAMA_SCOPE_RELATIONAL:
+			rcu_read_lock();
+			if (!task_is_descendant(current, child) &&
+			    !ptracer_exception_found(current, child) &&
+			    !ns_capable(__task_cred(child)->user_ns, CAP_SYS_PTRACE))
+				rc = -EPERM;
+			rcu_read_unlock();
+			break;
+		case YAMA_SCOPE_CAPABILITY:
+			rcu_read_lock();
+			if (!ns_capable(__task_cred(child)->user_ns, CAP_SYS_PTRACE))
+				rc = -EPERM;
+			rcu_read_unlock();
+			break;
+		case YAMA_SCOPE_NO_ATTACH:
+		default:
+			rc = -EPERM;
+			break;
+		}
+	}
+
+	if (rc) {
+		printk_ratelimited(KERN_NOTICE
+			"ptrace of pid %d was attempted by: %s (pid %d)\n",
+			child->pid, current->comm, current->pid);
+	}
+
+	return rc;
+}
+
+/**
+ * yama_ptrace_traceme - validate PTRACE_TRACEME calls
+ * @parent: task that will become the ptracer of the current task
+ *
+ * Returns 0 if following the ptrace is allowed, -ve on error.
+ */
+static int yama_ptrace_traceme(struct task_struct *parent)
+{
+	int rc = 0;
+
+	/* Only disallow PTRACE_TRACEME on more aggressive settings. */
+	switch (ptrace_scope) {
+	case YAMA_SCOPE_CAPABILITY:
+		if (!has_ns_capability(parent, current_user_ns(), CAP_SYS_PTRACE))
+			rc = -EPERM;
+		break;
+	case YAMA_SCOPE_NO_ATTACH:
 		rc = -EPERM;
 
 	if (rc) {
@@ -270,7 +306,7 @@ static int yama_ptrace_access_check(struct task_struct *child,
 	return rc;
 }
 
-static struct security_operations yama_ops = {
+struct security_operations yama_ops = {
 	.name =			"yama",
 
 	.ptrace_access_check =	yama_ptrace_access_check,
@@ -304,13 +340,16 @@ static struct ctl_table yama_sysctl_table[] = {
 
 static __init int yama_init(void)
 {
+#ifndef CONFIG_SECURITY_YAMA_STACKED
+	/*
+	 * If yama is being stacked this is already taken care of.
+	 */
 	if (!security_module_enable(&yama_ops))
 		return 0;
-
-	printk(KERN_INFO "Yama: becoming mindful.\n");
-
 	if (register_security(&yama_ops))
 		panic("Yama: kernel registration failed.\n");
+
+	pr_info("Yama: becoming mindful.\n");
 
 #ifdef CONFIG_SYSCTL
 	if (!register_sysctl_paths(yama_sysctl_path, yama_sysctl_table))
