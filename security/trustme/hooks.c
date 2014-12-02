@@ -4,18 +4,178 @@
 #include <linux/fs.h>
 #include <linux/mount.h>
 #include <linux/dcache.h>
+#include <linux/socket.h>
+#include <linux/netlink.h>
 
 #include <linux/pid_namespace.h>
 
+/*************************************
+ * Consolidating helper functions   */
+
+static void trustme_pidns_drop_privs(struct pid_namespace *pidns) {
+	printk(KERN_INFO "trustme-lsm: Dropping privileges in pid_namespace with child_reaper: %d", task_pid_nr(pidns->child_reaper));
+	pidns->security = 1;
+}
+
+static bool trustme_pidns_is_privileged(struct pid_namespace *pidns) {
+	struct pid_namespace *cur_pid_ns = pidns;
+
+	/* init_pid_ns is allowed to do everything */
+	if (pidns == &init_pid_ns)
+		return true;
+
+	/* traverse pidns tree and check if it has an unprivileged ancestor */
+	do {
+		if (cur_pid_ns->security) {
+			return false;
+		}
+	} while ((cur_pid_ns = cur_pid_ns->parent));
+	return true;
+}
+
+static int trustme_task_decision(struct task_struct *actor, struct task_struct *target)
+{
+	if (trustme_pidns_is_privileged(task_active_pid_ns(actor)))
+		return 0;
+
+	/* prevent communication etc. over container boundaries */
+	if (task_active_pid_ns(actor) != task_active_pid_ns(target)) {
+		printk(KERN_INFO "trustme-lsm: deny inter-container communication from %s to %s", actor->comm, target->comm);
+		return -1;
+	}
+
+	return 0;
+}
+
+static char *trustme_path_whitelist[] = {
+	"/",
+	"/system*",
+	"/data*",
+	"/dev*",
+	"/proc*",
+	"/tmp*",
+	"/firmware*",
+	"/cache*",
+	"/mnt*",
+	"/persist*",
+	"/storage*",
+	"/sbin*",
+	"/acct*",
+
+	/* sysfs stuff */
+	"/sys",
+	"/sys/kernel*",
+	"/sys/module*",
+	"/sys/power*",
+	"/sys/firmware*",
+	"/sys/fs*",
+	"/sys/bus*",
+	"/sys/class*",
+	"/sys/dev/*",
+	"/sys/devices",
+	"/sys/devices/virtual*",
+	"/sys/devices/timer*",
+	"/sys/devices/system*",
+	"/sys/devices/soc*",
+	"/sys/devices/qpnp*",
+	"/sys/devices/qcrypto*",
+	"/sys/devices/qcom,*",
+	"/sys/devices/pm8941,*",
+	"/sys/devices/platform*",
+	"/sys/devices/msm*",
+	"/sys/devices/mdp*",
+	"/sys/devices/maxim*",
+	"/sys/devices/l2*",
+	"/sys/devices/keyreset*",
+	"/sys/devices/hall*",
+	"/sys/devices/gpio*",
+	"/sys/devices/earjack*",
+	"/sys/devices/cpu*",
+	"/sys/devices/cpaccess*",
+	"/sys/devices/adcmap*",
+	"/sys/devices/sb*",
+	//"/sys/devices/leds-qpnp-ee16f000*",
+	"/sys/devices/f9*",
+	"/sys/devices/fa*",
+	"/sys/devices/fb*",
+	"/sys/devices/fc*",
+	"/sys/devices/fd*",
+	"/sys/devices/fe*",
+	"/sys/devices/7b*",
+	"/sys/devices/6144*",
+	"/sys/devices/48.*",
+	"/sys/devices/breakpoint*",
+	"/sys/devices/bq51013b_wlc.77*",
+	"/sys/devices/bluesleep.82*",
+	"/sys/devices/battery_tm_ctrl.78*",
+	"/sys/devices/avdd33.79*",
+	"/sys/devices/wcd9xxx-irq.*",
+	"/sys/devices/vibrator.*",
+	"/sys/devices/vdd10.*",
+	"/sys/devices/usb_bam*",
+	"/sys/devices/uei_irrc.*",
+	"/sys/devices/tracepoint*",
+	"/sys/devices/spmi*",
+	"/sys/devices/spi*",
+	"/sys/devices/sound.*",
+	"/sys/devices/software*",
+	"/sys/devices/slimbus*",
+	"/sys/devices/qcedev.*",
+};
+
+static int dirname_len(char *path)
+{
+	char *dir = strrchr(path, '/');
+	return dir ? dir-path+1 : strlen(path);
+}
+
+static int trustme_path_decision(struct path *path)
+{
+	char *buf = NULL;
+	char *p;
+	unsigned int buf_len = PAGE_SIZE / 2;
+	int i;
+	int len;
+	int d_len;
+
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
+		return 0;
+
+	buf = kmalloc(buf_len, GFP_NOFS);
+
+	p = d_path(path, buf, buf_len);
+	d_len = dirname_len(p);
+
+	for (i = 0; i < ARRAY_SIZE(trustme_path_whitelist); i++) {
+		len = strlen(trustme_path_whitelist[i]);
+		if (!strncmp(p, trustme_path_whitelist[i], len - 1)) {
+			/* only proceed if the last char is a * or if the basepath matches exactly */
+			if (trustme_path_whitelist[i][len-1] == '*' || !strncmp(p + len - 1, trustme_path_whitelist[i] + len - 1, d_len-len)) {
+				//printk(KERN_INFO "trustme-lsm: allowing container access to %s\n", p);
+				kfree(buf);
+				return 0;
+			}
+		}
+	}
+
+	printk(KERN_INFO "trustme-lsm: denying container access to %s (d_len: %d)\n", p, d_len);
+
+	kfree(buf);
+
+	return -1;
+}
+
+/*************************************
+ * Binder Hooks */
 static int trustme_binder_set_context_mgr(struct task_struct *mgr)
 {
-	struct pid_namespace *pidns = task_active_pid_ns(mgr);
-	printk(KERN_INFO "trustme-lsm: binder_set_context_mgr called");
+	//struct pid_namespace *pidns = task_active_pid_ns(mgr);
+	//printk(KERN_INFO "trustme-lsm: binder_set_context_mgr called");
 
 	printk(KERN_INFO "trustme-lsm: new context manager %s with pid: %d and vpid: %d",
 			mgr->comm, task_pid_nr(mgr), task_pid_vnr(mgr));
-	printk(KERN_INFO "trustme-lsm: child reaper of pidns: %s with pid %d",
-			pidns->child_reaper->comm, task_pid_nr(pidns->child_reaper));
+	//printk(KERN_INFO "trustme-lsm: child reaper of pidns: %s with pid %d",
+	//		pidns->child_reaper->comm, task_pid_nr(pidns->child_reaper));
 
 	return 0;
 }
@@ -25,52 +185,334 @@ static int trustme_binder_transaction(struct task_struct *from, struct task_stru
 	//printk(KERN_INFO "binder transaction: from: %s to: %s", from->comm, to->comm);
 
 	/* prevent binder transactions over container boundaries */
-	if (task_active_pid_ns(from) != task_active_pid_ns(to)) {
-		printk(KERN_INFO "trustme-lsm: deny inter-container binder communication");
+	return trustme_task_decision(from, to);
+}
+
+static int trustme_binder_transfer_binder(struct task_struct *from, struct task_struct *to)
+{
+	return trustme_task_decision(from, to);
+}
+
+static int trustme_binder_transfer_file(struct task_struct *from, struct task_struct *to, struct file *file)
+{
+	return trustme_task_decision(from, to);
+}
+
+/*************************************
+ * BPRM Hooks
+ * It is currently quite unclear if we need these */
+//static int trustme_bprm_set_creds(struct linux_binprm *bprm) {}
+//static int trustme_bprm_check_security(struct linux_binprm *bprm) {}
+//static int trustme_bprm_secureexec(struct linux_binprm *bprm) {}
+//static void trustme_bprm_committing_creds(struct linux_binprm *bprm) {}
+//static void trustme_bprm_committed_creds(struct linux_binprm *bprm) {}
+
+/*************************************
+ * Superblock Hooks
+ * We definitely need at least the sb_mount callback to restrict mounts for the container
+ * e.g. not allowing a container to do a cgroups mount */
+//static int trustme_sb_alloc_security(struct super_block *sb);
+//static void trustme_sb_free_security(struct super_block *sb);
+//static int trustme_sb_copy_data(char *orig, char *copy);
+//static int trustme_sb_remount(struct super_block *sb, void *data);
+//static int trustme_sb_kern_mount(struct super_block *sb, int flags, void *data);
+//static int trustme_sb_show_options(struct seq_file *m, struct super_block *sb);
+//static int trustme_sb_statfs(struct dentry *dentry);
+//static int trustme_sb_set_mnt_opts(struct super_block *sb,
+//                              struct security_mnt_opts *opts);
+//static void trustme_sb_clone_mnt_opts(const struct super_block *oldsb,
+//                                 struct super_block *newsb);
+//static int trustme_sb_parse_opts_str(char *options, struct security_mnt_opts *opts);
+
+static int trustme_sb_mount(const char *dev_name, struct path *path,
+                     const char *type, unsigned long flags, void *data)
+{
+	char *buf = NULL;
+	char *p;
+	unsigned int buf_len = PAGE_SIZE / 2;
+	int ret = 0;
+
+	buf = kmalloc(buf_len, GFP_NOFS);
+	p = d_path(path, buf, buf_len);
+
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current))) {
+		//printk(KERN_INFO "trustme-lsm: allowing privileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
+		return 0;
+	}
+
+	// TODO only allow very specific mounts for unprivileged containers
+	if (type) {
+		if (!strcmp(type, "sysfs")) {
+			/* only allow mounting sysfs to /sys */
+			if (strcmp(p, "/sys")) {
+				ret = -1;
+			}
+		} else if (!strcmp(type, "procfs")) {
+			/* only allow mounting procfs to /proc */
+			if (strcmp(p, "/proc")) {
+				ret = -1;
+			}
+		} else if (!strcmp(type, "cgroup")) {
+			ret = -1;
+		}
+	}
+
+	if (ret == 0) {
+		printk(KERN_INFO "trustme-lsm: allowing unprivileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
+	} else {
+		printk(KERN_INFO "trustme-lsm: denying unprivileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
+	}
+
+	kfree(buf);
+	return ret;
+}
+
+static int trustme_sb_umount(struct vfsmount *mnt, int flags)
+{
+	/* TODO allow unprivileged containers only for special cases... */
+	return 0;
+}
+static int trustme_sb_pivotroot(struct path *old_path,
+                         struct path *new_path)
+{
+	/* containers are not allowed to do this */
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
+		return 0;
+	return -1;
+}
+
+/*************************************
+ * inode Hooks
+ * We probably don't need these as we focus on the path hooks. */
+
+/*************************************
+ * path Hooks */
+static int trustme_path_unlink(struct path *dir, struct dentry *dentry)
+{
+	struct path path = { dir->mnt, dentry };
+	return trustme_path_decision(&path);
+}
+
+int trustme_path_mkdir(struct path *dir, struct dentry *dentry, umode_t mode)
+{
+	struct path path = { dir->mnt, dentry };
+	return trustme_path_decision(&path);
+}
+
+int trustme_path_rmdir(struct path *dir, struct dentry *dentry)
+{
+	struct path path = { dir->mnt, dentry };
+	return trustme_path_decision(&path);
+}
+
+/* we don't need this as we prevent devices from being created via cgroups */
+//static int trustme_path_mknod(struct path *dir, struct dentry *dentry, umode_t mode,
+//			   unsigned int dev);
+
+int trustme_path_truncate(struct path *path)
+{
+	return trustme_path_decision(path);
+}
+
+int trustme_path_symlink(struct path *dir, struct dentry *dentry,
+			  const char *old_name)
+{
+	struct path path = { dir->mnt, dentry };
+	return trustme_path_decision(&path);
+}
+
+int trustme_path_link(struct dentry *old_dentry, struct path *new_dir,
+		       struct dentry *new_dentry)
+{
+	struct path path1 = { new_dir->mnt, old_dentry };
+	struct path path2 = { new_dir->mnt, new_dentry };
+	if (trustme_path_decision(&path1) || trustme_path_decision(&path2))
+		return -1;
+	return 0;
+}
+
+int trustme_path_rename(struct path *old_dir, struct dentry *old_dentry,
+			 struct path *new_dir, struct dentry *new_dentry)
+{
+	struct path path1 = { old_dir->mnt, old_dentry };
+	struct path path2 = { new_dir->mnt, new_dentry };
+	if (trustme_path_decision(&path1) || trustme_path_decision(&path2))
+		return -1;
+	return 0;
+}
+
+int trustme_path_chmod(struct path *path, umode_t mode)
+{
+	return trustme_path_decision(path);
+}
+
+static int trustme_path_chown(struct path *path, uid_t uid, gid_t gid)
+{
+	return trustme_path_decision(path);
+}
+
+int trustme_path_chroot(struct path *path)
+{
+	return trustme_path_decision(path);
+}
+
+int trustme_file_open(struct file *file, const struct cred *cred)
+{
+	return trustme_path_decision(&file->f_path);
+}
+
+/*************************************
+ * File Hooks
+ * Checks on already open files. */
+static int trustme_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	/* TODO check ioctls */
+	return 0;
+}
+
+static int trustme_file_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	/* TODO ...? */
+	return 0;
+}
+
+/*************************************
+ * Task Hooks
+ * All hooks that access some other task struct should check if the accessed process is in the same namespace 
+ * e.g. setpgid, setioprio, setnice, setrlimit, setscheduler, kill, wait */
+
+/*************************************
+ * Netlink hook
+ * Allows to check single netlink messages. We probably don't need this since we can prevent the container from
+ * opening a socket of type netlink via the socket hooks...? */
+
+/*************************************
+ * Unix Socket operations
+ * These are hooks for sockets in the abstract unix domain socket namespace. Other unix domain sockets can also
+ * be handled via normal inode/socket hooks */
+
+/*************************************
+ * Socket hooks
+ * Some hooks could be interesting: */
+int trustme_socket_create(int family, int type, int protocol, int kern)
+{
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
+		return 0;
+
+	if (family == AF_NETLINK && protocol == NETLINK_KOBJECT_UEVENT) {
+		printk(KERN_INFO "trustme-lsm: preventing container process %s from opening netlink uevent socket",
+				current->comm);
 		return -1;
 	}
+
 	return 0;
 }
 
-static int trustme_inode_permission(struct inode *inode, int mask)
+//int trustme_socket_bind(struct socket *sock, struct sockaddr *address, int addrlen);
+//int trustme_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen);
+//int trustme_socket_listen(struct socket *sock, int backlog);
+//int trustme_socket_sendmsg(struct socket *sock, struct msghdr *msg, int size);
+
+/*************************************
+ * XFRM hooks
+ * Something with firewall ops... */
+
+/*************************************
+ * Key hooks
+ * We probably don't need these */
+
+/*************************************
+ * System V IPC hooks (msg_queue_*, ipc_*, shm_*)
+ * We have to prevent ipc between processes from different namespaces */
+
+/*************************************
+ * System V Semaphores
+ * no idea... */
+
+/*************************************
+ * Misc Hooks
+ * ptrace: only allow if namespaces match
+ * capget,capset: only allow if current matches target task namespace
+ * ...  */
+static int trustme_ptrace_access_check(struct task_struct *child, unsigned int mode)
 {
-	//struct pid_namespace *pidns = task_active_pid_ns(current);
-
-	// TODO check the policy if the pidns may access the inode...
-	/*
-	struct pid_namespace *pidns = task_active_pid_ns(current);
-	pid_t container_init_pid = task_pid_nr(pidns->child_reaper);
-	struct super_block *current_root_sb = current->fs->root.mnt->mnt_sb;
-	struct super_block *inode_sb = inode->i_sb;
-	if (current_root_sb != inode_sb) {
-		printk(KERN_INFO "trustme-lsm: container (PID: %d on superblock %s) accessing"
-				" inode on superblock %s",
-				container_init_pid,
-				current_root_sb->s_id,
-				inode_sb->s_id);
-	}
-	*/
-
-	return 0;
+	return trustme_task_decision(current, child);
 }
 
-static int trustme_file_permission(struct file *file, int mask)
+static int trustme_ptrace_traceme(struct task_struct *parent)
 {
-	return 0;
+	return trustme_task_decision(parent, current);
 }
 
-static int trustme_capable(const struct cred *cred, struct user_namespace *ns,
-			int cap, int audit)
+static int trustme_capget(struct task_struct *target,
+                    kernel_cap_t *effective,
+                    kernel_cap_t *inheritable, kernel_cap_t *permitted)
 {
-	return 0;
+	return trustme_task_decision(current, target);
 }
+
+// We don't need this since it sets caps on the current process. Leave
+// this to the default capability checks.
+//static int trustme_capset(struct cred *new,
+//                    const struct cred *old,
+//                    const kernel_cap_t *effective,
+//                    const kernel_cap_t *inheritable,
+//                    const kernel_cap_t *permitted);
+//static int trustme_capable(const struct cred *cred, struct user_namespace *ns,
+//			int cap, int audit);
+
+// We probably do not need the following
+//static int quotactl(int cmds, int type, int id, struct super_block *sb);
+//static int quota_on(struct dentry *dentry);
+//static int syslog(int type);
+//static int settime(const struct timespec *ts, const struct timezone *tz);
+//static int vm_enough_memory(struct mm_struct *mm, long pages);
+
+/*************************************
+ * Audit hooks
+ * no idea */
 
 static struct security_hook_list trustme_hooks[] = {
+	/* binder */
 	LSM_HOOK_INIT(binder_set_context_mgr, trustme_binder_set_context_mgr),
 	LSM_HOOK_INIT(binder_transaction, trustme_binder_transaction),
-	LSM_HOOK_INIT(inode_permission, trustme_inode_permission),
-	LSM_HOOK_INIT(file_permission, trustme_file_permission),
-	LSM_HOOK_INIT(capable, trustme_capable),
+	LSM_HOOK_INIT(binder_transfer_binder, trustme_binder_transfer_binder),
+	LSM_HOOK_INIT(binder_transfer_file, trustme_binder_transfer_file),
+
+	/* superblock */
+	LSM_HOOK_INIT(sb_mount, trustme_sb_mount),
+	LSM_HOOK_INIT(sb_umount, trustme_sb_umount),
+	LSM_HOOK_INIT(sb_pivotroot, trustme_sb_pivotroot),
+
+	/* path */
+	LSM_HOOK_INIT(path_unlink, trustme_path_unlink),
+	LSM_HOOK_INIT(path_mkdir, trustme_path_mkdir),
+	LSM_HOOK_INIT(path_rmdir, trustme_path_rmdir),
+	//.path_mknod  trustme_path_mknod,
+	LSM_HOOK_INIT(path_truncate, trustme_path_truncate),
+	LSM_HOOK_INIT(path_symlink, trustme_path_symlink),
+	LSM_HOOK_INIT(path_link, trustme_path_link),
+	LSM_HOOK_INIT(path_rename, trustme_path_rename),
+	LSM_HOOK_INIT(path_chmod, trustme_path_chmod),
+	LSM_HOOK_INIT(path_chown, trustme_path_chown),
+	LSM_HOOK_INIT(path_chroot, trustme_path_chroot),
+	LSM_HOOK_INIT(file_open, trustme_file_open),
+
+	/* file */
+	LSM_HOOK_INIT(file_ioctl, trustme_file_ioctl),
+	LSM_HOOK_INIT(file_fcntl, trustme_file_fcntl),
+
+	/* socket */
+	LSM_HOOK_INIT(socket_create, trustme_socket_create),
+
+	/* misc */
+	LSM_HOOK_INIT(ptrace_access_check, trustme_ptrace_access_check),
+	LSM_HOOK_INIT(ptrace_traceme, trustme_ptrace_traceme),
+	LSM_HOOK_INIT(capget, trustme_capget),
+
+	//LSM_HOOK_INIT(inode_permission, trustme_inode_permission),
+	//LSM_HOOK_INIT(file_permission, trustme_file_permission),
+	//LSM_HOOK_INIT(capable, trustme_capable),
 };
 
 static __init int trustme_init(void)
@@ -85,5 +527,42 @@ static __init int trustme_init(void)
 	security_add_hooks(trustme_hooks, ARRAY_SIZE(trustme_hooks));
 	return 0;
 }
-
 security_initcall(trustme_init);
+
+/*************************************************
+ * SecurityFS interface */
+static int trustme_droppriv_open(struct inode *inode, struct file *file)
+{
+	trustme_pidns_drop_privs(task_active_pid_ns(current));
+	return 0;
+}
+
+/**
+ * trustme_operations is a "struct file_operations" which is used for handling
+ * /sys/kernel/security/trustme/ interface.
+ */
+static const struct file_operations trustme_droppriv_fops = {
+	.open    = trustme_droppriv_open,
+	//.release = trustme_release,
+	//.poll    = trustme_poll,
+	//.read    = trustme_read,
+	//.write   = trustme_write,
+	.llseek  = noop_llseek,
+};
+
+/**
+ * Initialize /sys/kernel/security/trustme/ interface.
+ *
+ * Returns 0.
+ */
+static int __init trustme_securityfs_init(void)
+{
+	struct dentry *trustme_dir;
+
+	trustme_dir = securityfs_create_dir("trustme", NULL);
+	securityfs_create_file("drop_privileges", 0600, trustme_dir, NULL,
+			       &trustme_droppriv_fops);
+	return 0;
+}
+
+fs_initcall(trustme_securityfs_init);
