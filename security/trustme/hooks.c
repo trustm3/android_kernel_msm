@@ -9,6 +9,8 @@
 
 #include <linux/pid_namespace.h>
 
+#define TRUSTME_ICC_PATH "/data/trustme-com*"
+
 /*************************************
  * Consolidating helper functions   */
 
@@ -129,6 +131,7 @@ static char *trustme_path_ro_whitelist[] = {
 
 static char *trustme_path_blacklist[] = {
 	"/sys/devices/leds-*",
+	TRUSTME_ICC_PATH,
 	NULL,
 };
 
