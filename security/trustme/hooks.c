@@ -72,55 +72,64 @@ static char *trustme_path_whitelist[] = {
 	"/sys/bus*",
 	"/sys/class*",
 	"/sys/dev/*",
-	"/sys/devices",
-	"/sys/devices/virtual*",
-	"/sys/devices/timer*",
-	"/sys/devices/system*",
-	"/sys/devices/soc*",
-	"/sys/devices/qpnp*",
-	"/sys/devices/qcrypto*",
-	"/sys/devices/qcom,*",
-	"/sys/devices/pm8941,*",
-	"/sys/devices/platform*",
-	"/sys/devices/msm*",
-	"/sys/devices/mdp*",
-	"/sys/devices/maxim*",
-	"/sys/devices/l2*",
-	"/sys/devices/keyreset*",
-	"/sys/devices/hall*",
-	"/sys/devices/gpio*",
-	"/sys/devices/earjack*",
-	"/sys/devices/cpu*",
-	"/sys/devices/cpaccess*",
-	"/sys/devices/adcmap*",
-	"/sys/devices/sb*",
-	//"/sys/devices/leds-qpnp-ee16f000*",
-	"/sys/devices/f9*",
-	"/sys/devices/fa*",
-	"/sys/devices/fb*",
-	"/sys/devices/fc*",
-	"/sys/devices/fd*",
-	"/sys/devices/fe*",
-	"/sys/devices/7b*",
-	"/sys/devices/6144*",
-	"/sys/devices/48.*",
-	"/sys/devices/breakpoint*",
-	"/sys/devices/bq51013b_wlc.77*",
-	"/sys/devices/bluesleep.82*",
-	"/sys/devices/battery_tm_ctrl.78*",
-	"/sys/devices/avdd33.79*",
-	"/sys/devices/wcd9xxx-irq.*",
-	"/sys/devices/vibrator.*",
-	"/sys/devices/vdd10.*",
-	"/sys/devices/usb_bam*",
-	"/sys/devices/uei_irrc.*",
-	"/sys/devices/tracepoint*",
-	"/sys/devices/spmi*",
-	"/sys/devices/spi*",
-	"/sys/devices/sound.*",
-	"/sys/devices/software*",
-	"/sys/devices/slimbus*",
-	"/sys/devices/qcedev.*",
+	"/sys/devices*",
+	//"/sys/devices/virtual*",
+	//"/sys/devices/timer*";
+	//"/sys/devices/system*",
+	//"/sys/devices/soc*",
+	//"/sys/devices/qpnp*",
+	//"/sys/devices/qcrypto*",
+	//"/sys/devices/qcom,*",
+	//"/sys/devices/pm8941,*",
+	//"/sys/devices/platform*",
+	//"/sys/devices/msm*",
+	//"/sys/devices/mdp*",
+	//"/sys/devices/maxim*",
+	//"/sys/devices/l2*",
+	//"/sys/devices/keyreset*",
+	//"/sys/devices/hall*",
+	//"/sys/devices/gpio*",
+	//"/sys/devices/earjack*",
+	//"/sys/devices/cpu*",
+	//"/sys/devices/cpaccess*",
+	//"/sys/devices/adcmap*",
+	//"/sys/devices/sb*",
+	//"/sys/devices/f9*",
+	//"/sys/devices/fa*",
+	//"/sys/devices/fb*",
+	//"/sys/devices/fc*",
+	//"/sys/devices/fd*",
+	//"/sys/devices/fe*",
+	//"/sys/devices/7b*",
+	//"/sys/devices/6144*",
+	//"/sys/devices/48.*",
+	//"/sys/devices/breakpoint*",
+	//"/sys/devices/bq51013b_wlc.77*",
+	//"/sys/devices/bluesleep.82*",
+	//"/sys/devices/battery_tm_ctrl.78*",
+	//"/sys/devices/avdd33.79*",
+	//"/sys/devices/wcd9xxx-irq.*",
+	//"/sys/devices/vibrator.*",
+	//"/sys/devices/vdd10.*",
+	//"/sys/devices/usb_bam*",
+	//"/sys/devices/uei_irrc.*",
+	//"/sys/devices/tracepoint*",
+	//"/sys/devices/spmi*",
+	//"/sys/devices/spi*",
+	//"/sys/devices/sound.*",
+	//"/sys/devices/software*",
+	//"/sys/devices/slimbus*",
+	//"/sys/devices/qcedev.*",
+	NULL
+};
+
+static char *trustme_path_ro_whitelist[] = {
+	NULL,
+};
+
+static char *trustme_path_blacklist[] = {
+	"/sys/devices/leds-*",
+	NULL,
 };
 
 static int dirname_len(char *path)
@@ -129,39 +138,92 @@ static int dirname_len(char *path)
 	return dir ? dir-path+1 : strlen(path);
 }
 
+static bool trustme_path_in_list(char *path, char *list[])
+{
+	int len;
+	int d_len;
+	char **entry = list;
+
+	d_len = dirname_len(path);
+
+	while (*entry) {
+		len = strlen(*entry);
+		if (!strncmp(path, *entry, len - 1)) {
+			/* only proceed if the last char is a * or if the basepath matches exactly */
+			if ((*entry)[len-1] == '*' || !strncmp(path + len - 1, (*entry) + len - 1, d_len-len)) {
+				return true;
+			}
+		}
+		entry++;
+	}
+
+	return false;
+}
+
 static int trustme_path_decision(struct path *path)
 {
 	char *buf = NULL;
 	char *p;
 	unsigned int buf_len = PAGE_SIZE / 2;
-	int i;
-	int len;
-	int d_len;
 
 	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
 		return 0;
 
 	buf = kmalloc(buf_len, GFP_NOFS);
-
+	if (!buf) {
+		panic("trustme-lsm: cannot allocate memory for path");
+	}
 	p = d_path(path, buf, buf_len);
-	d_len = dirname_len(p);
 
-	for (i = 0; i < ARRAY_SIZE(trustme_path_whitelist); i++) {
-		len = strlen(trustme_path_whitelist[i]);
-		if (!strncmp(p, trustme_path_whitelist[i], len - 1)) {
-			/* only proceed if the last char is a * or if the basepath matches exactly */
-			if (trustme_path_whitelist[i][len-1] == '*' || !strncmp(p + len - 1, trustme_path_whitelist[i] + len - 1, d_len-len)) {
-				//printk(KERN_INFO "trustme-lsm: allowing container access to %s\n", p);
-				kfree(buf);
-				return 0;
-			}
-		}
+	if (trustme_path_in_list(p, trustme_path_blacklist)) {
+		goto out;
 	}
 
-	printk(KERN_INFO "trustme-lsm: denying container access to %s (d_len: %d)\n", p, d_len);
+	if (trustme_path_in_list(p, trustme_path_whitelist)) {
+		//printk(KERN_INFO "trustme-lsm: allowing container access to %s\n", p);
+		kfree(buf);
+		return 0;
+	}
 
+out:
+	printk(KERN_INFO "trustme-lsm: denying container access to %s\n", p);
 	kfree(buf);
+	return -1;
+}
 
+static int trustme_path_open_decision(struct path *path, int flags)
+{
+	char *buf = NULL;
+	char *p;
+	unsigned int buf_len = PAGE_SIZE / 2;
+
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
+		return 0;
+
+	buf = kmalloc(buf_len, GFP_NOFS);
+	p = d_path(path, buf, buf_len);
+
+	if (trustme_path_in_list(p, trustme_path_blacklist)) {
+		goto out;
+	}
+
+	if (trustme_path_in_list(p, trustme_path_whitelist)) {
+		//printk(KERN_INFO "trustme-lsm: allowing container access to %s\n", p);
+		kfree(buf);
+		return 0;
+	}
+
+	/* additionally check if there are NO flags, i.e. read-only mode and
+	 * use the read-only whitelist additionally in this case */
+	if (!flags && trustme_path_in_list(p, trustme_path_ro_whitelist)) {
+		//printk(KERN_INFO "trustme-lsm: allowing container read-only access to %s\n", p);
+		kfree(buf);
+		return 0;
+	}
+
+out:
+	printk(KERN_INFO "trustme-lsm: denying container access to %s\n", p);
+	kfree(buf);
 	return -1;
 }
 
@@ -233,6 +295,9 @@ static int trustme_sb_mount(char *dev_name, struct path *path,
 	int ret = 0;
 
 	buf = kmalloc(buf_len, GFP_NOFS);
+	if (!buf) {
+		panic("trustme-lsm: cannot allocate memory for path");
+	}
 	p = d_path(path, buf, buf_len);
 
 	if (trustme_pidns_is_privileged(task_active_pid_ns(current))) {
@@ -358,7 +423,7 @@ int trustme_path_chroot(struct path *path)
 
 int trustme_dentry_open(struct file *file, const struct cred *cred)
 {
-	return trustme_path_decision(&file->f_path);
+	return trustme_path_open_decision(&file->f_path, file->f_flags);
 }
 
 /*************************************
