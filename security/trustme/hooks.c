@@ -175,6 +175,12 @@ static int trustme_path_decision(struct path *path)
 	}
 	p = d_path(path, buf, buf_len);
 
+	/* Filter out all pseudo paths, i.e. paths that do not begin with
+	 * a slash. Examples: "socket:", "pipe:", "anon_inode:" */
+	if (strncmp(p, "/", 1)) {
+		return 0;
+	}
+
 	if (trustme_path_in_list(p, trustme_path_blacklist)) {
 		goto out;
 	}
@@ -201,6 +207,9 @@ static int trustme_path_open_decision(struct path *path, int flags)
 		return 0;
 
 	buf = kmalloc(buf_len, GFP_NOFS);
+	if (!buf) {
+		panic("trustme-lsm: cannot allocate memory for path");
+	}
 	p = d_path(path, buf, buf_len);
 
 	if (trustme_path_in_list(p, trustme_path_blacklist)) {
@@ -350,6 +359,12 @@ static int trustme_sb_pivotroot(struct path *old_path,
  * inode Hooks
  * We probably don't need these as we focus on the path hooks. */
 
+static int trustme_inode_getattr(struct vfsmount *mnt, struct dentry *dentry)
+{
+	struct path path = { mnt, dentry };
+	return trustme_path_decision(&path);
+}
+
 /*************************************
  * path Hooks */
 static int trustme_path_unlink(struct path *dir, struct dentry *dentry)
@@ -370,9 +385,12 @@ int trustme_path_rmdir(struct path *dir, struct dentry *dentry)
 	return trustme_path_decision(&path);
 }
 
-/* we don't need this as we prevent devices from being created via cgroups */
-//static int trustme_path_mknod(struct path *dir, struct dentry *dentry, umode_t mode,
-//			   unsigned int dev);
+static int trustme_path_mknod(struct path *dir, struct dentry *dentry, umode_t mode,
+			   unsigned int dev)
+{
+	struct path path = { dir->mnt, dentry};
+	return trustme_path_decision(&path);
+}
 
 int trustme_path_truncate(struct path *path)
 {
@@ -431,15 +449,20 @@ int trustme_file_open(struct file *file, const struct cred *cred)
  * Checks on already open files. */
 static int trustme_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	/* TODO check ioctls */
-	return 0;
+	return trustme_path_decision(&file->f_path);
 }
 
 static int trustme_file_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	/* TODO ...? */
-	return 0;
+	return trustme_path_decision(&file->f_path);
 }
+
+/*
+static int trustme_file_permission(struct file *file, int mask)
+{
+	return trustme_path_decision(&file->f_path);
+}
+*/
 
 /*************************************
  * Task Hooks
@@ -549,11 +572,11 @@ static struct security_hook_list trustme_hooks[] = {
 	LSM_HOOK_INIT(sb_umount, trustme_sb_umount),
 	LSM_HOOK_INIT(sb_pivotroot, trustme_sb_pivotroot),
 
-	/* path */
+	/* path and file */
 	LSM_HOOK_INIT(path_unlink, trustme_path_unlink),
 	LSM_HOOK_INIT(path_mkdir, trustme_path_mkdir),
 	LSM_HOOK_INIT(path_rmdir, trustme_path_rmdir),
-	//.path_mknod  trustme_path_mknod,
+	LSM_HOOK_INIT(path_mknod, trustme_path_mknod),
 	LSM_HOOK_INIT(path_truncate, trustme_path_truncate),
 	LSM_HOOK_INIT(path_symlink, trustme_path_symlink),
 	LSM_HOOK_INIT(path_link, trustme_path_link),
@@ -563,9 +586,11 @@ static struct security_hook_list trustme_hooks[] = {
 	LSM_HOOK_INIT(path_chroot, trustme_path_chroot),
 	LSM_HOOK_INIT(file_open, trustme_file_open),
 
-	/* file */
 	LSM_HOOK_INIT(file_ioctl, trustme_file_ioctl),
 	LSM_HOOK_INIT(file_fcntl, trustme_file_fcntl),
+	LSM_HOOK_INIT(inode_getattr, trustme_inode_getattr),
+	//LSM_HOOK_INIT(file_permission, trustme_file_permission),
+	//LSM_HOOK_INIT(inode_permission, trustme_inode_permission),
 
 	/* socket */
 	LSM_HOOK_INIT(socket_create, trustme_socket_create),
@@ -575,8 +600,6 @@ static struct security_hook_list trustme_hooks[] = {
 	LSM_HOOK_INIT(ptrace_traceme, trustme_ptrace_traceme),
 	LSM_HOOK_INIT(capget, trustme_capget),
 
-	//LSM_HOOK_INIT(inode_permission, trustme_inode_permission),
-	//LSM_HOOK_INIT(file_permission, trustme_file_permission),
 	//LSM_HOOK_INIT(capable, trustme_capable),
 };
 
