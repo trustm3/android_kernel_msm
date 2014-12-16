@@ -11,43 +11,46 @@
 
 #define TRUSTME_ICC_PATH "/data/trustme-com*"
 
+struct mount_whitelist_entry {
+	char *dev_name;
+	char *path;
+	char *type;
+	unsigned long flags_that_matter;
+	unsigned long flags;
+};
+
 /*************************************
- * Consolidating helper functions   */
+ * Whitelists and Blacklists */
 
-static void trustme_pidns_drop_privs(struct pid_namespace *pidns) {
-	printk(KERN_INFO "trustme-lsm: Dropping privileges in pid_namespace with child_reaper: %d", task_pid_nr(pidns->child_reaper));
-	pidns->security = 1;
-}
+static struct mount_whitelist_entry mount_whitelist[] = {
+	/* Allow the container to do arbitrary tmpfs type mounts */
+	{"*", "*", "tmpfs", 0, 0},
 
-static bool trustme_pidns_is_privileged(struct pid_namespace *pidns) {
-	struct pid_namespace *cur_pid_ns = pidns;
+	/* Allow the container some magic on its rootfs */
+	{"*", "/", "rootfs", MS_RDONLY | MS_REMOUNT, MS_RDONLY | MS_REMOUNT},
+	{"*", "/", "rootfs", MS_REC | MS_SHARED, MS_REC | MS_SHARED},
+	{"*", "/", "*", MS_REC | MS_SLAVE, MS_REC | MS_SLAVE},
 
-	/* init_pid_ns is allowed to do everything */
-	if (pidns == &init_pid_ns)
-		return true;
+	/* Allow the container remounting its /system with some mandatory flags */
+	{"*", "/system", "*", MS_RDONLY | MS_NOSUID | MS_NODEV | MS_REMOUNT,
+		MS_RDONLY | MS_NOSUID | MS_NODEV | MS_REMOUNT},
 
-	/* traverse pidns tree and check if it has an unprivileged ancestor */
-	do {
-		if (cur_pid_ns->security) {
-			return false;
-		}
-	} while ((cur_pid_ns = cur_pid_ns->parent));
-	return true;
-}
+	/* Allow the container mounting sysfs and procfs to the default locations (only) */
+	{"*", "/sys", "sysfs", 0, 0},
+	{"*", "/proc", "procfs", 0, 0},
 
-static int trustme_task_decision(struct task_struct *actor, struct task_struct *target)
-{
-	if (trustme_pidns_is_privileged(task_active_pid_ns(actor)))
-		return 0;
+	/* Allow the container to mount a fuse to a specific folder */
+	{"*", "/mnt/shell/emulated", "fuse", 0, 0},
+	/* Allow container bind mounts from fuse to storage tmpfs */
+	{"/mnt/shell/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND},
+	/* Allow container bind mounts inside the emulated storage folder */
+	{"/storage/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND},
 
-	/* prevent communication etc. over container boundaries */
-	if (task_active_pid_ns(actor) != task_active_pid_ns(target)) {
-		printk(KERN_INFO "trustme-lsm: deny inter-container communication from %s to %s", actor->comm, target->comm);
-		return -1;
-	}
-
-	return 0;
-}
+	/* Example: Allow all kinds of bind mounts */
+	//{"*", "*", "*", MS_BIND, MS_BIND},
+	/* Example: Allow all mounts that are NO bind mounts (not very usable rule) */
+	//{"*", "*", "*", MS_BIND, 0};
+};
 
 static char *trustme_path_whitelist[] = {
 	"/",
@@ -134,6 +137,45 @@ static char *trustme_path_blacklist[] = {
 	TRUSTME_ICC_PATH,
 	NULL,
 };
+
+
+/*************************************
+ * Consolidating helper functions   */
+
+static void trustme_pidns_drop_privs(struct pid_namespace *pidns) {
+	printk(KERN_INFO "trustme-lsm: Dropping privileges in pid_namespace with child_reaper: %d", task_pid_nr(pidns->child_reaper));
+	pidns->security = 1;
+}
+
+static bool trustme_pidns_is_privileged(struct pid_namespace *pidns) {
+	struct pid_namespace *cur_pid_ns = pidns;
+
+	/* init_pid_ns is allowed to do everything */
+	if (pidns == &init_pid_ns)
+		return true;
+
+	/* traverse pidns tree and check if it has an unprivileged ancestor */
+	do {
+		if (cur_pid_ns->security) {
+			return false;
+		}
+	} while ((cur_pid_ns = cur_pid_ns->parent));
+	return true;
+}
+
+static int trustme_task_decision(struct task_struct *actor, struct task_struct *target)
+{
+	if (trustme_pidns_is_privileged(task_active_pid_ns(actor)))
+		return 0;
+
+	/* prevent communication etc. over container boundaries */
+	if (task_active_pid_ns(actor) != task_active_pid_ns(target)) {
+		printk(KERN_INFO "trustme-lsm: deny inter-container communication from %s to %s", actor->comm, target->comm);
+		return -1;
+	}
+
+	return 0;
+}
 
 static int dirname_len(char *path)
 {
@@ -299,13 +341,71 @@ static int trustme_binder_transfer_file(struct task_struct *from, struct task_st
 //                                 struct super_block *newsb);
 //static int trustme_sb_parse_opts_str(char *options, struct security_mnt_opts *opts);
 
+static void trustme_sb_printflags(unsigned long flags)
+{
+	if(flags & MS_RDONLY     ) printk(" MS_RDONLY");
+	if(flags & MS_NOSUID     ) printk(" MS_NOSUID");
+	if(flags & MS_NODEV      ) printk(" MS_NODEV");
+	if(flags & MS_NOEXEC     ) printk(" MS_NOEXEC");
+	if(flags & MS_SYNCHRONOUS) printk(" MS_SYNCHRONOUS");
+	if(flags & MS_REMOUNT    ) printk(" MS_REMOUNT");
+	if(flags & MS_MANDLOCK   ) printk(" MS_MANDLOCK");
+	if(flags & MS_DIRSYNC    ) printk(" MS_DIRSYNC");
+	if(flags & MS_NOATIME    ) printk(" MS_NOATIME");
+	if(flags & MS_NODIRATIME ) printk(" MS_NODIRATIME");
+	if(flags & MS_BIND       ) printk(" MS_BIND");
+	if(flags & MS_MOVE       ) printk(" MS_MOVE");
+	if(flags & MS_REC        ) printk(" MS_REC");
+	if(flags & MS_VERBOSE    ) printk(" MS_VERBOSE");
+	if(flags & MS_SILENT     ) printk(" MS_SILENT");
+	if(flags & MS_POSIXACL   ) printk(" MS_POSIXACL");
+	if(flags & MS_UNBINDABLE ) printk(" MS_UNBINDABLE");
+	if(flags & MS_PRIVATE    ) printk(" MS_PRIVATE");
+	if(flags & MS_SLAVE      ) printk(" MS_SLAVE");
+	if(flags & MS_SHARED     ) printk(" MS_SHARED");
+	if(flags & MS_RELATIME   ) printk(" MS_RELATIME");
+	if(flags & MS_KERNMOUNT  ) printk(" MS_KERNMOUNT");
+	if(flags & MS_I_VERSION  ) printk(" MS_I_VERSION");
+	if(flags & MS_STRICTATIME) printk(" MS_STRICTATIME");
+
+	/* sb flags are internal to the kernel */
+	if(flags & MS_NOSEC ) printk(" MS_NOSEC");
+	if(flags & MS_BORN  ) printk(" MS_BORN");
+	if(flags & MS_ACTIVE) printk(" MS_ACTIVE");
+	if(flags & MS_NOUSER) printk(" MS_NOUSER");
+}
+
+static bool trustme_strings_match(char *rule, const char *str)
+{
+	int rule_len;
+
+	/* Everything matches against wildcard rule */
+	if (rule[0] == '*')
+		return true;
+
+	/* If the rule is no whildcard (see above) and str is null we don't match */
+	if (!str)
+		return false;
+
+	rule_len = strlen(rule);
+
+	if (!strncmp(str, rule, rule_len - 1)) {
+		/* only proceed if the last char is a * or if it matches exactly */
+		if (rule[rule_len-1] == '*' || !strcmp(str + rule_len - 1, rule + rule_len - 1)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static int trustme_sb_mount(const char *dev_name, struct path *path,
                      const char *type, unsigned long flags, void *data)
 {
 	char *buf = NULL;
 	char *p;
 	unsigned int buf_len = PAGE_SIZE / 2;
-	int ret = 0;
+	int ret = -1;
+	int i;
 
 	if (trustme_pidns_is_privileged(task_active_pid_ns(current))) {
 		//printk(KERN_INFO "trustme-lsm: allowing privileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
@@ -318,28 +418,40 @@ static int trustme_sb_mount(const char *dev_name, struct path *path,
 	}
 	p = d_path(path, buf, buf_len);
 
-	// TODO only allow very specific mounts for unprivileged containers
-	if (type) {
-		if (!strcmp(type, "sysfs")) {
-			/* only allow mounting sysfs to /sys */
-			if (strcmp(p, "/sys")) {
-				ret = -1;
-			}
-		} else if (!strcmp(type, "procfs")) {
-			/* only allow mounting procfs to /proc */
-			if (strcmp(p, "/proc")) {
-				ret = -1;
-			}
-		} else if (!strcmp(type, "cgroup")) {
-			ret = -1;
+	/* Check if there is matching entry in the whitelist for the mount */
+	for (i = 0; i < ARRAY_SIZE(mount_whitelist); i++) {
+		struct mount_whitelist_entry *entry = &mount_whitelist[i];
+		/* filter based on mount flags
+		 * this should be the fastest, so do it first... */
+		if ((entry->flags & entry->flags_that_matter) != (flags & entry->flags_that_matter)) {
+			continue;
 		}
+		/* filter based on device name */
+		if (!trustme_strings_match(entry->dev_name, dev_name)) {
+			continue;
+		}
+		/* filter based on mount point */
+		if (!trustme_strings_match(entry->path, p)) {
+			continue;
+		}
+		/* filter based on fs type */
+		if (!trustme_strings_match(entry->type, type)) {
+			continue;
+		}
+		/* if we reached this point, the whitelist entry matches the mount => we allow it */
+		ret = 0;
+		break;
 	}
 
 	if (ret == 0) {
-		printk(KERN_INFO "trustme-lsm: allowing unprivileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
+		printk(KERN_INFO "trustme-lsm: allowing unprivileged container sb_mount with dev_name: %s, path: %s, type: %s", dev_name, p, type);
 	} else {
-		printk(KERN_INFO "trustme-lsm: denying unprivileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
+		printk(KERN_INFO "trustme-lsm: denying unprivileged container sb_mount with dev_name: %s, path: %s, type: %s", dev_name, p, type);
 	}
+
+	printk(" flags:");
+	trustme_sb_printflags(flags);
+	printk("\n");
 
 	kfree(buf);
 	return ret;
