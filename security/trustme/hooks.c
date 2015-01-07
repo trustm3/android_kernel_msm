@@ -611,7 +611,6 @@ int trustme_socket_create(int family, int type, int protocol, int kern)
 
 	return 0;
 }
-
 //int trustme_socket_bind(struct socket *sock, struct sockaddr *address, int addrlen);
 //int trustme_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen);
 //int trustme_socket_listen(struct socket *sock, int backlog);
@@ -655,8 +654,8 @@ static int trustme_capget(struct task_struct *target,
 	return trustme_task_decision(current, target);
 }
 
-// We don't need this since it sets caps on the current process. Leave
-// this to the default capability checks.
+/* We don't need this since it sets caps on the current process. Leave
+   this to the default capability checks. */
 //static int trustme_capset(struct cred *new,
 //                    const struct cred *old,
 //                    const kernel_cap_t *effective,
@@ -665,16 +664,12 @@ static int trustme_capget(struct task_struct *target,
 //static int trustme_capable(const struct cred *cred, struct user_namespace *ns,
 //			int cap, int audit);
 
-// We probably do not need the following
+/* We probably do not need the following */
 //static int quotactl(int cmds, int type, int id, struct super_block *sb);
 //static int quota_on(struct dentry *dentry);
 //static int syslog(int type);
 //static int settime(const struct timespec *ts, const struct timezone *tz);
 //static int vm_enough_memory(struct mm_struct *mm, long pages);
-
-/*************************************
- * Audit hooks
- * no idea */
 
 static struct security_hook_list trustme_hooks[] = {
 	/* binder */
