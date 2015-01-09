@@ -1306,7 +1306,7 @@ static int do_umount(struct mount *mnt, int flags)
  */
 static inline bool may_mount(void)
 {
-	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
+	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_MOUNT);
 }
 
 /*
@@ -1343,7 +1343,8 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 	if (!check_mnt(mnt))
 		goto dput_and_out;
 	retval = -EPERM;
-	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+
+	if (flags & MNT_FORCE && !ns_capable(mnt->mnt_ns->user_ns, CAP_SYS_MOUNT))
 		goto dput_and_out;
 
 	retval = do_umount(mnt, flags);
@@ -2918,9 +2919,9 @@ static int mntns_install(struct nsproxy *nsproxy, void *ns)
 	struct mnt_namespace *mnt_ns = ns;
 	struct path root;
 
-	if (!ns_capable(mnt_ns->user_ns, CAP_SYS_ADMIN) ||
+	if (!ns_capable(mnt_ns->user_ns, CAP_SYS_MOUNT) ||
 	    !nsown_capable(CAP_SYS_CHROOT) ||
-	    !nsown_capable(CAP_SYS_ADMIN))
+	    !nsown_capable(CAP_SYS_MOUNT))
 		return -EPERM;
 
 	if (fs->users != 1)
