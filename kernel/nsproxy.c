@@ -135,17 +135,26 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 	struct nsproxy *old_ns = tsk->nsproxy;
 	struct nsproxy *new_ns;
 	int err = 0;
+	unsigned long ns_flags_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
+			       CLONE_NEWNET | CLONE_NEWPID;
+	unsigned long ns_flags = flags & ns_flags_mask;
 
 	if (!old_ns)
 		return 0;
 
 	get_nsproxy(old_ns);
 
-	if (!(flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-				CLONE_NEWPID | CLONE_NEWNET)))
+	if (!ns_flags)
 		return 0;
 
-	if (!capable(CAP_SYS_ADMIN)) {
+	/* If there is any flag apart from the mnt namespace flag, we
+	 * require CAP_SYS_ADMIN in any case */
+	if ((ns_flags & ~CLONE_NEWNS) && !capable(CAP_SYS_ADMIN)) {
+		err = -EPERM;
+		goto out;
+	}
+	/* If only a mnt namespace should be created, CAP_SYS_MOUNT is sufficient */
+	if ((ns_flags & CLONE_NEWNS) && !capable(CAP_SYS_MOUNT)) {
 		err = -EPERM;
 		goto out;
 	}
@@ -199,12 +208,19 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 		struct nsproxy **new_nsp, struct fs_struct *new_fs)
 {
 	int err = 0;
+	unsigned long ns_flags_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
+			       CLONE_NEWNET | CLONE_NEWPID;
+	unsigned long ns_flags = unshare_flags & ns_flags_mask;
 
-	if (!(unshare_flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-			       CLONE_NEWNET | CLONE_NEWPID)))
+	if (!ns_flags)
 		return 0;
 
-	if (!capable(CAP_SYS_ADMIN))
+	/* If there is any flag apart from the mnt namespace flag, we
+	 * require CAP_SYS_ADMIN in any case */
+	if ((ns_flags & ~CLONE_NEWNS) && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	/* If only a mnt namespace should be created, CAP_SYS_MOUNT is sufficient */
+	if ((ns_flags & CLONE_NEWNS) && !capable(CAP_SYS_MOUNT))
 		return -EPERM;
 
 	*new_nsp = create_new_namespaces(unshare_flags, current,

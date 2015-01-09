@@ -360,8 +360,11 @@ struct cpu_vfs_cap_data {
 
 #define CAP_WAKE_ALARM            35
 
+/* Allow mounts and unmounts and the creation of mount namespaces
+ * Does NOT allow pivot_root, move mounts and setns for mount namespaces */
+#define CAP_SYS_MOUNT			36
 
-#define CAP_LAST_CAP         CAP_WAKE_ALARM
+#define CAP_LAST_CAP         CAP_SYS_MOUNT
 
 #define cap_valid(x) ((x) >= 0 && (x) <= CAP_LAST_CAP)
 
