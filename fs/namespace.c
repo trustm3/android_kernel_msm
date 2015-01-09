@@ -1210,7 +1210,7 @@ SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 		goto dput_and_out;
 
 	retval = -EPERM;
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_MOUNT))
 		goto dput_and_out;
 
 	retval = do_umount(mnt, flags);
@@ -1236,7 +1236,7 @@ SYSCALL_DEFINE1(oldumount, char __user *, name)
 
 static int mount_is_safe(struct path *path)
 {
-	if (capable(CAP_SYS_ADMIN))
+	if (capable(CAP_SYS_MOUNT))
 		return 0;
 	return -EPERM;
 #ifdef notyet
@@ -1574,7 +1574,7 @@ static int do_change_type(struct path *path, int flag)
 	int type;
 	int err = 0;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_MOUNT))
 		return -EPERM;
 
 	if (path->dentry != path->mnt->mnt_root)
@@ -1689,7 +1689,7 @@ static int do_remount(struct path *path, int flags, int mnt_flags,
 	struct super_block *sb = path->mnt->mnt_sb;
 	struct mount *mnt = real_mount(path->mnt);
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_MOUNT))
 		return -EPERM;
 
 	if (!check_mnt(mnt))
@@ -1895,7 +1895,7 @@ static int do_new_mount(struct path *path, const char *type, int flags,
 		return -EINVAL;
 
 	/* we need capabilities... */
-	if (!capable(CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_MOUNT))
 		return -EPERM;
 
 	mnt = do_kern_mount(type, flags, name, data);
@@ -2687,7 +2687,7 @@ static int mntns_install(struct nsproxy *nsproxy, void *ns)
 	struct mnt_namespace *mnt_ns = ns;
 	struct path root;
 
-	if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SYS_CHROOT))
+	if (!capable(CAP_SYS_MOUNT) || !capable(CAP_SYS_CHROOT))
 		return -EINVAL;
 
 	if (fs->users != 1)
