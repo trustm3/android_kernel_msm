@@ -181,6 +181,7 @@ static int trustme_path_decision(struct path *path)
 	/* Filter out all pseudo paths, i.e. paths that do not begin with
 	 * a slash. Examples: "socket:", "pipe:", "anon_inode:" */
 	if (strncmp(p, "/", 1)) {
+		kfree(buf);
 		return 0;
 	}
 
@@ -306,16 +307,16 @@ static int trustme_sb_mount(const char *dev_name, struct path *path,
 	unsigned int buf_len = PAGE_SIZE / 2;
 	int ret = 0;
 
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current))) {
+		//printk(KERN_INFO "trustme-lsm: allowing privileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
+		return 0;
+	}
+
 	buf = kmalloc(buf_len, GFP_NOFS);
 	if (!buf) {
 		panic("trustme-lsm: cannot allocate memory for path");
 	}
 	p = d_path(path, buf, buf_len);
-
-	if (trustme_pidns_is_privileged(task_active_pid_ns(current))) {
-		//printk(KERN_INFO "trustme-lsm: allowing privileged container sb_mount with dev_name: %s, path: %s, type: %s, flags: %lu\n", dev_name, p, type, flags);
-		return 0;
-	}
 
 	// TODO only allow very specific mounts for unprivileged containers
 	if (type) {
