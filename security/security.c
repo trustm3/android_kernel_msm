@@ -134,6 +134,11 @@ int __init security_module_enable(const char *module)
 
 /* Security operations */
 
+int security_android_alarm_set_rtc(void)
+{
+	return call_int_hook(android_alarm_set_rtc, 0);
+}
+
 int security_binder_set_context_mgr(struct task_struct *mgr)
 {
 	return call_int_hook(binder_set_context_mgr, 0, mgr);
@@ -1520,6 +1525,8 @@ int security_audit_rule_match(u32 secid, u32 field, u32 op, void *lsmrule,
 #endif /* CONFIG_AUDIT */
 
 struct security_hook_heads security_hook_heads = {
+	.android_alarm_set_rtc =
+		LIST_HEAD_INIT(security_hook_heads.android_alarm_set_rtc),
 	.binder_set_context_mgr =
 		LIST_HEAD_INIT(security_hook_heads.binder_set_context_mgr),
 	.binder_transaction =

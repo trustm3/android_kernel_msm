@@ -1237,6 +1237,7 @@
  */
 
 union security_list_options {
+	int (*android_alarm_set_rtc) (void);
 	int (*binder_set_context_mgr)(struct task_struct *mgr);
 	int (*binder_transaction)(struct task_struct *from,
 					struct task_struct *to);
@@ -1531,6 +1532,7 @@ union security_list_options {
 };
 
 struct security_hook_heads {
+	struct list_head android_alarm_set_rtc; 
 	struct list_head binder_set_context_mgr;
 	struct list_head binder_transaction;
 	struct list_head binder_transfer_binder;
