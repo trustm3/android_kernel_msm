@@ -197,6 +197,11 @@ TIPE security_##FUNC(__VA_ARGS__)
 
 /* Security operations */
 
+HOOK(int, android_alarm_set_rtc, void)
+{
+	return call_int_hook(android_alarm_set_rtc, 0);
+}
+
 HOOK(int, binder_set_context_mgr, struct task_struct *mgr)
 {
 	return call_int_hook(binder_set_context_mgr, 0, mgr);
@@ -1580,6 +1585,10 @@ static int __init security_enlist_ops(struct security_operations *sop)
 {
 	pr_info("Security operations for %s initialized\n", sop->name);
 
+	/* Android Alarm driver hooks */
+	if (add_hook(android_alarm_set_rtc))
+		return -ENOMEM;
+
 	/* Binder hooks */
 	if (add_hook(binder_set_context_mgr))
 		return -ENOMEM;
@@ -1992,6 +2001,10 @@ static void clear_hook_entry(struct list_head *head, void *hook)
 void security_module_disable(struct security_operations *sop)
 {
 	pr_info("Security operations for %s disabled.\n", sop->name);
+
+	/* Android alarm driver hooks */
+	clear_hook(android_alarm_set_rtc);
+
 	/* Binder hooks */
 	clear_hook(binder_set_context_mgr);
 	clear_hook(binder_transaction);
