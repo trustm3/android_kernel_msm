@@ -22,6 +22,7 @@
 #include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
+#include <linux/security.h>
 #include <linux/alarmtimer.h>
 #include "android_alarm.h"
 
@@ -268,9 +269,15 @@ static long alarm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int rv;
 
 	switch (ANDROID_ALARM_BASE_CMD(cmd)) {
+	case ANDROID_ALARM_SET_RTC:
+		//if (!capable(CAP_SYS_TIME)) {
+		if (security_android_alarm_set_rtc() < 0) {
+			alarm_dbg(IO, "process %s tried to set rtc from "
+				"unprivileged container...", current->comm);
+			return -EPERM;
+		}
 	case ANDROID_ALARM_SET_AND_WAIT(0):
 	case ANDROID_ALARM_SET(0):
-	case ANDROID_ALARM_SET_RTC:
 	case ANDROID_ALARM_CLEAR(0):
 		if (copy_from_user(&ts, (void __user *)arg, sizeof(ts)))
 			return -EFAULT;

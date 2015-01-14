@@ -282,6 +282,15 @@ out:
 	return -1;
 }
 
+static int trustme_android_alarm_set_rtc(void)
+{
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
+		return 0;
+
+	printk(KERN_INFO "trustme-lsm: denying unprivileged container to set rtc\n");
+	return -1;
+}
+
 /*************************************
  * Binder Hooks */
 static int trustme_binder_set_context_mgr(struct task_struct *mgr)
@@ -672,6 +681,10 @@ static int trustme_capget(struct task_struct *target,
 //static int vm_enough_memory(struct mm_struct *mm, long pages);
 
 static struct security_hook_list trustme_hooks[] = {
+
+	/* android alarm */
+	LSM_HOOK_INIT(android_alarm_set_rtc, trustme_android_alarm_set_rtc),
+
 	/* binder */
 	LSM_HOOK_INIT(binder_set_context_mgr, trustme_binder_set_context_mgr),
 	LSM_HOOK_INIT(binder_transaction, trustme_binder_transaction),
