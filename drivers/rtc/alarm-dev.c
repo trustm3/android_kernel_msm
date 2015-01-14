@@ -23,6 +23,7 @@
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
 #include <linux/wakelock.h>
+#include <linux/security.h>
 
 #include <asm/mach/time.h>
 
@@ -154,6 +155,12 @@ from_old_alarm_set:
 		spin_unlock_irqrestore(&alarm_slock, flags);
 		break;
 	case ANDROID_ALARM_SET_RTC:
+		//if (!capable(CAP_SYS_TIME)) {
+		if (security_android_alarm_set_rtc() < 0) {
+			pr_alarm(IO, "process %s tried to set rtc from unprivileged container...", current->comm);
+			rv = -EPERM;
+			goto err1;
+		}
 		if (copy_from_user(&new_rtc_time, (void __user *)arg,
 		    sizeof(new_rtc_time))) {
 			rv = -EFAULT;
