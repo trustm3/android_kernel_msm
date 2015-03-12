@@ -306,6 +306,7 @@ static void evdev_event(struct input_handle *handle,
 	/* Power button events should go to the init namespace */
 	int is_power_button = (type == EV_KEY && code == KEY_POWER);
 	int is_power_inject = (type == EV_KEY && code == KEY_POWER_INJECT);
+	static unsigned int prev_type = 0;
 #endif
 
 	if (type == EV_SYN && code == SYN_TIME_SEC) {
@@ -359,21 +360,34 @@ static void evdev_event(struct input_handle *handle,
 #endif
 	list_for_each_entry_rcu(client, &evdev->client_list, node) {
 #ifdef CONFIG_INPUT_DEV_NS
-		/* filter power button events for all events which are not
-		 * from init_dev_ns */
-		if ((is_power_button && !evdev_client_from_init_dev_ns(client))
-				/* filter power inject events for all clients from init_dev_ns */
-				|| (is_power_inject && evdev_client_from_init_dev_ns(client))
-				/* filter all non-active clients except init_dev_ns (especially important for syn events)*/
-				|| (!evdev_client_is_active(client))
-				/* filter all clients from inside a container if the device was grabbed*/
-				|| (grabbed && !evdev_client_from_init_dev_ns(client)))
+		/* Switch events should go to all but the init container. This
+		 * makes sure that the switch states are consitant in all Android
+		 * instances.
+		 * Next we filter power button events for all events which are
+		 * not from init_dev_ns */
+		if (type == EV_SW || prev_type == EV_SW) {
+			pr_debug("EV_SW: type=%d code=%d value=%d\n", type, code, value);
+			if (evdev_client_from_init_dev_ns(client))
+				continue;
+		} else if ((is_power_button && !evdev_client_from_init_dev_ns(client))
+			   /* filter power inject events for all clients from init_dev_ns */
+			   || (is_power_inject && evdev_client_from_init_dev_ns(client))
+			   /* filter all non-active clients except init_dev_ns (especially
+			    * important for syn events) */
+			   || (!evdev_client_is_active(client))
+			   /* filter all clients from inside a container if the device was grabbed */
+			   || (grabbed && !evdev_client_from_init_dev_ns(client))) {
 			continue;
+		}
 #endif
 		evdev_pass_event(client, &event, time_mono, time_real);
 	}
 
 	rcu_read_unlock();
+
+#ifdef CONFIG_INPUT_DEV_NS
+	prev_type = type;
+#endif
 
 	if (type == EV_SYN && code == SYN_REPORT) {
 		evdev->hw_ts_sec = -1;
