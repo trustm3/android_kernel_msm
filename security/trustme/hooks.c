@@ -26,6 +26,9 @@ static struct mount_whitelist_entry mount_whitelist[] = {
 	/* Allow the container to do arbitrary tmpfs type mounts */
 	{"*", "*", "tmpfs", 0, 0},
 
+	/* FIXME Allow all cgroups for now, restrict this to cpuacct submodule only */
+	{"*", "*", "cgroup", 0, 0},
+
 	/* Allow the container some magic on its rootfs */
 	{"*", "/", "rootfs", MS_RDONLY | MS_REMOUNT, MS_RDONLY | MS_REMOUNT},
 	{"*", "/", "rootfs", MS_REC | MS_SHARED, MS_REC | MS_SHARED},
