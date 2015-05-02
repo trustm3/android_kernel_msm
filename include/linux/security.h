@@ -27,6 +27,8 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/bio.h>
+#include <linux/string.h>
+#include <linux/mm.h>
 
 struct linux_binprm;
 struct cred;
@@ -54,9 +56,6 @@ struct xattr;
 struct xfrm_sec_ctx;
 struct mm_struct;
 
-/* Maximum number of letters for an LSM name string */
-#define SECURITY_NAME_MAX	10
-
 /* If capable should audit the security request */
 #define SECURITY_CAP_NOAUDIT 0
 #define SECURITY_CAP_AUDIT 1
@@ -66,10 +65,7 @@ struct audit_krule;
 struct user_namespace;
 struct timezone;
 
-/*
- * These functions are in security/capability.c and are used
- * as the default capabilities functions
- */
+/* These functions are in security/commoncap.c */
 extern int cap_capable(const struct cred *cred, struct user_namespace *ns,
 		       int cap, int audit);
 extern int cap_settime(const struct timespec *ts, const struct timezone *tz);
@@ -110,8 +106,6 @@ struct xfrm_policy;
 struct xfrm_state;
 struct xfrm_user_sec_ctx;
 struct seq_file;
-
-extern int cap_netlink_send(struct sock *sk, struct sk_buff *skb);
 
 #ifdef CONFIG_MMU
 extern unsigned long mmap_min_addr;
@@ -458,7 +452,7 @@ static inline int security_settime(const struct timespec *ts,
 
 static inline int security_vm_enough_memory_mm(struct mm_struct *mm, long pages)
 {
-	return cap_vm_enough_memory(mm, pages);
+	return __vm_enough_memory(mm, pages, cap_vm_enough_memory(mm, pages));
 }
 
 static inline int security_bprm_set_creds(struct linux_binprm *bprm)
@@ -1060,7 +1054,7 @@ static inline int security_setprocattr(struct task_struct *p, char *name, void *
 
 static inline int security_netlink_send(struct sock *sk, struct sk_buff *skb)
 {
-	return cap_netlink_send(sk, skb);
+	return 0;
 }
 
 static inline int security_secid_to_secctx(u32 secid, char **secdata, u32 *seclen)
@@ -1624,37 +1618,6 @@ static inline char *alloc_secdata(void)
 static inline void free_secdata(void *secdata)
 { }
 #endif /* CONFIG_SECURITY */
-
-#ifdef CONFIG_SECURITY_YAMA
-extern int yama_ptrace_access_check(struct task_struct *child,
-				    unsigned int mode);
-extern int yama_ptrace_traceme(struct task_struct *parent);
-extern void yama_task_free(struct task_struct *task);
-extern int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3,
-			   unsigned long arg4, unsigned long arg5);
-#else
-static inline int yama_ptrace_access_check(struct task_struct *child,
-					   unsigned int mode)
-{
-	return 0;
-}
-
-static inline int yama_ptrace_traceme(struct task_struct *parent)
-{
-	return 0;
-}
-
-static inline void yama_task_free(struct task_struct *task)
-{
-}
-
-static inline int yama_task_prctl(int option, unsigned long arg2,
-				  unsigned long arg3, unsigned long arg4,
-				  unsigned long arg5)
-{
-	return -ENOSYS;
-}
-#endif /* CONFIG_SECURITY_YAMA */
 
 #endif /* ! __LINUX_SECURITY_H */
 
