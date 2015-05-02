@@ -233,8 +233,6 @@ extern struct mutex	smack_known_lock;
 extern struct list_head smack_known_list;
 extern struct list_head smk_netlbladdr_list;
 
-extern struct security_operations smack_ops;
-
 /*
  * Is the directory transmuting?
  */
