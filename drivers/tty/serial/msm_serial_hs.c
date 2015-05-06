@@ -65,6 +65,7 @@
 #include <linux/msm-sps.h>
 #include <linux/platform_data/msm_serial_hs.h>
 #include <linux/msm-bus.h>
+#include <linux/dev_namespace.h>
 
 #include "msm_serial_hs_hwreg.h"
 #define UART_SPS_CONS_PERIPHERAL 0
@@ -2098,7 +2099,9 @@ static irqreturn_t msm_hs_isr(int irq, void *dev)
 		 * Hence mb() requires here.
 		 */
 		mb();
-		queue_work(msm_uport->hsuart_wq, &msm_uport->clock_off_w);
+		queue_work_in(dev_ns_nsproxy(current_dev_ns()),
+			msm_uport->hsuart_wq,
+			&msm_uport->clock_off_w);
 	}
 
 	/* Change in CTS interrupt */
