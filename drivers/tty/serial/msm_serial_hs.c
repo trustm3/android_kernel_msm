@@ -62,6 +62,8 @@
 #include <asm/atomic.h>
 #include <asm/irq.h>
 
+#include <linux/dev_namespace.h>
+
 #include <mach/hardware.h>
 #include <mach/dma.h>
 #include <mach/sps.h>
@@ -1169,7 +1171,8 @@ static void msm_hs_stop_rx_locked(struct uart_port *uport)
 		if (is_blsp_uart(msm_uport)) {
 			msm_uport->rx.flush = FLUSH_STOP;
 			/* workqueue for BAM rx endpoint disconnect */
-			queue_work(msm_uport->hsuart_wq,
+			queue_work_in(dev_ns_nsproxy(current_dev_ns()),
+				msm_uport->hsuart_wq,
 				&msm_uport->disconnect_rx_endpoint);
 		} else {
 			/* do discard flush */
