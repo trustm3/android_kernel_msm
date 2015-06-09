@@ -307,6 +307,9 @@ static int pidns_install(struct nsproxy *nsproxy, void *ns)
 
 	put_pid_ns(nsproxy->pid_ns);
 	nsproxy->pid_ns = get_pid_ns(new);
+#ifdef CONFIG_DEV_NS
+	nsproxy->dev_ns = nsproxy->pid_ns->dev_ns;
+#endif
 	return 0;
 }
 
