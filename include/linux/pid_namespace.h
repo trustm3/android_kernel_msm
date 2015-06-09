@@ -19,6 +19,7 @@ struct pidmap {
 #define PIDMAP_ENTRIES		((PID_MAX_LIMIT+BITS_PER_PAGE-1)/BITS_PER_PAGE)
 
 struct bsd_acct_struct;
+struct dev_namespace;
 
 struct pid_namespace {
 	struct kref kref;
@@ -45,6 +46,9 @@ struct pid_namespace {
 	int hide_pid;
 	int reboot;	/* group exit code if this pidns was rebooted */
 	unsigned int proc_inum;
+#ifdef CONFIG_DEV_NS
+	struct dev_namespace *dev_ns;
+#endif
 };
 
 extern struct pid_namespace init_pid_ns;
