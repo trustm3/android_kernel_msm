@@ -85,6 +85,7 @@ static struct dev_namespace *create_dev_ns(struct task_struct *task,
 	dev_ns->tag[DEV_NS_TAG_LEN-1] = '\0';
 
 	dev_ns->pid_ns = get_pid_ns(new_pidns);
+	new_pidns->dev_ns = dev_ns;
 
 	return dev_ns;
 }
