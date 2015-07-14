@@ -6,10 +6,30 @@
 #include <linux/dcache.h>
 #include <linux/socket.h>
 #include <linux/netlink.h>
+#include <linux/in.h>
 
 #include <linux/pid_namespace.h>
 
 #define TRUSTME_ICC_PATH "/data/trustme-com*"
+
+#define PRIV_NET_PREFIX 8
+#define PRIV_NET_SUBNET (127 << 24)
+
+typedef struct {
+	uint32_t addr;
+	uint16_t prefix;
+	uint16_t port;
+	const char *desc;
+} blocked_net_t;
+
+
+// Blacklist of addresses and ports for unprivileged processes
+#define MAKE_IP_HOST(a,b,c,d) ((a)<<24 | (b)<<16 | (c)<<8 | (d))
+const blocked_net_t blocked_networks[] = {
+	{MAKE_IP_HOST(127,0,0,0), 8, 5037, "adb server"},
+	{MAKE_IP_HOST(127,0,0,0), 8, 5038, "adb server"},
+	{MAKE_IP_HOST(127,0,0,0), 8, 5555, "adb daemon"},
+};
 
 struct mount_whitelist_entry {
 	char *dev_name;
@@ -624,7 +644,41 @@ int trustme_socket_create(int family, int type, int protocol, int kern)
 	return 0;
 }
 //int trustme_socket_bind(struct socket *sock, struct sockaddr *address, int addrlen);
-//int trustme_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen);
+
+int trustme_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen)
+{
+	if (sizeof(blocked_networks) == 0)
+		return 0;
+	if (!address || addrlen < sizeof(struct sockaddr) || address->sa_family != AF_INET)
+		return 0;
+	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
+		return 0;
+
+{ // C90 bypass
+	const struct sockaddr_in *dst = (struct sockaddr_in *)address;
+	const uint32_t ip = ntohl(dst->sin_addr.s_addr);
+	const uint16_t port = ntohs(dst->sin_port);
+	const blocked_net_t *b = blocked_networks;
+	/*
+	printk(KERN_INFO "trustme-lsm: checking socket_connect() to %pI4h:%u from process %s",
+			&ip, port, current->comm);	// for debugging
+	*/
+	for (; b < blocked_networks+ARRAY_SIZE(blocked_networks); b++) {
+		if (b->port && b->port != port)
+			continue;
+{ // C90 bypass
+		uint32_t mask = ~(((uint32_t)-1) >> b->prefix);
+		if ((ip & mask) != b->addr)
+			continue;
+}
+		printk(KERN_INFO "trustme-lsm: rejected socket_connect() to %s at %pI4h:%u from process %s",
+				b->desc?b->desc:"?", &ip, port, current->comm);
+		return -1;
+	}
+}
+	return 0;
+}
+
 //int trustme_socket_listen(struct socket *sock, int backlog);
 //int trustme_socket_sendmsg(struct socket *sock, struct msghdr *msg, int size);
 
@@ -721,6 +775,7 @@ static struct security_hook_list trustme_hooks[] = {
 
 	/* socket */
 	LSM_HOOK_INIT(socket_create, trustme_socket_create),
+	LSM_HOOK_INIT(socket_connect, trustme_socket_connect),
 
 	/* misc */
 	LSM_HOOK_INIT(ptrace_access_check, trustme_ptrace_access_check),
