@@ -95,14 +95,17 @@ struct dev_namespace *copy_dev_ns(unsigned long flags,
 				  struct pid_namespace *new_pidns)
 {
 	struct dev_namespace *dev_ns = task->nsproxy->dev_ns;
-
 	/*
+
 	 * Couple device namespace semantics with pid-namespace.
 	 * It's convenient, and we ran out of clone flags anyway.
 	 */
-	if (!(flags & CLONE_NEWPID))
-		return get_dev_ns(dev_ns);
-	else
+	if (!(flags & CLONE_NEWPID)) {
+		if (!dev_ns) // doing setns to init namespace
+			return get_dev_ns(&init_dev_ns);
+		else
+			return get_dev_ns(dev_ns);
+	} else
 		return create_dev_ns(task, new_pidns);
 }
 
