@@ -37,6 +37,7 @@ struct mount_whitelist_entry {
 	char *type;
 	unsigned long flags_that_matter;
 	unsigned long flags;
+	char *data;
 };
 
 /*************************************
@@ -44,35 +45,35 @@ struct mount_whitelist_entry {
 
 static struct mount_whitelist_entry mount_whitelist[] = {
 	/* Allow the container to do arbitrary tmpfs type mounts */
-	{"*", "*", "tmpfs", 0, 0},
+	{"*", "*", "tmpfs", 0, 0, "*"},
 
 	/* FIXME Allow all cgroups for now, restrict this to cpuacct submodule only */
-	{"*", "*", "cgroup", 0, 0},
+	{"*", "*", "cgroup", 0, 0, "cpuacct"},
 
 	/* Allow the container some magic on its rootfs */
-	{"*", "/", "rootfs", MS_RDONLY | MS_REMOUNT, MS_RDONLY | MS_REMOUNT},
-	{"*", "/", "rootfs", MS_REC | MS_SHARED, MS_REC | MS_SHARED},
-	{"*", "/", "*", MS_REC | MS_SLAVE, MS_REC | MS_SLAVE},
+	{"*", "/", "rootfs", MS_RDONLY | MS_REMOUNT, MS_RDONLY | MS_REMOUNT, "*"},
+	{"*", "/", "rootfs", MS_REC | MS_SHARED, MS_REC | MS_SHARED, "*"},
+	{"*", "/", "*", MS_REC | MS_SLAVE, MS_REC | MS_SLAVE, "*"},
 
 	/* Allow the container remounting its /system with some mandatory flags */
 	{"*", "/system", "*", MS_RDONLY | MS_NOSUID | MS_NODEV | MS_REMOUNT,
-		MS_RDONLY | MS_NOSUID | MS_NODEV | MS_REMOUNT},
+		MS_RDONLY | MS_NOSUID | MS_NODEV | MS_REMOUNT, "*"},
 
 	/* Allow the container mounting sysfs and procfs to the default locations (only) */
-	{"*", "/sys", "sysfs", 0, 0},
-	{"*", "/proc", "procfs", 0, 0},
+	{"*", "/sys", "sysfs", 0, 0, "*"},
+	{"*", "/proc", "procfs", 0, 0, "*"},
 
 	/* Allow the container to mount a fuse to a specific folder */
-	{"*", "/mnt/shell/emulated", "fuse", 0, 0},
+	{"*", "/mnt/shell/emulated", "fuse", 0, 0, "*"},
 	/* Allow container bind mounts from fuse to storage tmpfs */
-	{"/mnt/shell/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND},
+	{"/mnt/shell/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND, "*"},
 	/* Allow container bind mounts inside the emulated storage folder */
-	{"/storage/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND},
+	{"/storage/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND, "*"},
 
 	/* Example: Allow all kinds of bind mounts */
-	//{"*", "*", "*", MS_BIND, MS_BIND},
+	//{"*", "*", "*", MS_BIND, MS_BIND, "*"},
 	/* Example: Allow all mounts that are NO bind mounts (not very usable rule) */
-	//{"*", "*", "*", MS_BIND, 0};
+	//{"*", "*", "*", MS_BIND, 0, "*"};
 };
 
 static char *trustme_path_whitelist[] = {
@@ -470,18 +471,24 @@ static int trustme_sb_mount(const char *dev_name, struct path *path,
 		if (!trustme_strings_match(entry->type, type)) {
 			continue;
 		}
+		/* filter based on fs-specific data */
+		if (!trustme_strings_match(entry->data, data)) {
+			continue;
+		}
 		/* if we reached this point, the whitelist entry matches the mount => we allow it */
 		ret = 0;
 		break;
 	}
 
 	if (ret == 0) {
-		printk(KERN_INFO "trustme-lsm: allowing unprivileged container sb_mount with dev_name: %s, path: %s, type: %s", dev_name, p, type);
+		printk(KERN_INFO "trustme-lsm: allowing unprivileged container sb_mount with dev_name: %s, path: %s, type: %s, data: %s",
+				dev_name, p, type, data ? (char *)data : "(null)");
 	} else {
-		printk(KERN_INFO "trustme-lsm: denying unprivileged container sb_mount with dev_name: %s, path: %s, type: %s", dev_name, p, type);
+		printk(KERN_INFO "trustme-lsm: denying unprivileged container sb_mount with dev_name: %s, path: %s, type: %s, data: %s",
+				dev_name, p, type, data ? (char *)data : "(null)");
 	}
 
-	printk(" flags:");
+	printk(KERN_INFO " flags:");
 	trustme_sb_printflags(flags);
 	printk("\n");
 
