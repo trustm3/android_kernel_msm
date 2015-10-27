@@ -4592,6 +4592,11 @@ static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
 	struct nlmsghdr *nlh;
 	struct sk_security_struct *sksec = sk->sk_security;
 
+#ifdef CONFIG_SECURITY_TRUSTME
+        if (task_active_pid_ns(current) == &init_pid_ns)
+                return 0;
+#endif
+
 	if (skb->len < NLMSG_SPACE(0)) {
 		err = -EINVAL;
 		goto out;

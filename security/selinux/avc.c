@@ -34,6 +34,10 @@
 #include "avc_ss.h"
 #include "classmap.h"
 
+#ifdef CONFIG_SECURITY_TRUSTME
+#include <linux/pid_namespace.h>
+#endif
+
 #define AVC_CACHE_SLOTS			512
 #define AVC_DEF_CACHE_THRESHOLD		512
 #define AVC_CACHE_RECLAIM		16
@@ -813,6 +817,12 @@ inline int avc_audit(u32 ssid, u32 tsid,
 	       unsigned flags)
 {
 	u32 denied, audited;
+
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) == &init_pid_ns)
+		return 0;
+#endif
+
 	denied = requested & ~avd->allowed;
 	if (unlikely(denied)) {
 		audited = denied & avd->auditdeny;
@@ -1199,6 +1209,11 @@ inline int avc_has_perm_noaudit(u32 ssid, u32 tsid,
 	u32 denied;
 
 	BUG_ON(!requested);
+
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) == &init_pid_ns)
+		return 0;
+#endif
 
 	rcu_read_lock();
 
