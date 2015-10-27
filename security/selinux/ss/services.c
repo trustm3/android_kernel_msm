@@ -70,6 +70,10 @@
 #include "ebitmap.h"
 #include "audit.h"
 
+#ifdef CONFIG_SECURITY_TRUSTME
+#include <linux/pid_namespace.h>
+#endif
+
 int selinux_policycap_netpeer;
 int selinux_policycap_openperm;
 
@@ -1532,6 +1536,10 @@ out:
 	kfree(n);
 	if (!selinux_enforcing)
 		return 0;
+#ifdef CONFIG_SECURITY_TRUSTME
+        if (task_active_pid_ns(current) == &init_pid_ns)
+                return 0;
+#endif
 	return -EACCES;
 }
 
