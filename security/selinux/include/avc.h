@@ -133,6 +133,12 @@ static inline int avc_audit(u32 ssid, u32 tsid,
 			    struct common_audit_data *a, unsigned flags)
 {
 	u32 audited, denied;
+
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) == &init_pid_ns)
+		return 0;
+#endif
+
 	audited = avc_audit_required(requested, avd, result, 0, &denied);
 	if (likely(!audited))
 		return 0;
