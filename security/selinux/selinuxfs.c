@@ -41,6 +41,10 @@
 #include "objsec.h"
 #include "conditional.h"
 
+#ifdef CONFIG_SECURITY_TRUSTME
+#include <linux/pid_namespace.h>
+#endif
+
 /* Policy capability filenames */
 static char *policycap_names[] = {
 	"network_peer_controls",
@@ -144,6 +148,15 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 	char *page = NULL;
 	ssize_t length;
 	int new_value;
+
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) != &init_pid_ns) {
+		printk(KERN_WARNING "selinuxfs: %s: access denied for pid (%d) which "
+			"is not part of root namespaces\n", __func__, current->pid);
+		length = -EACCES;
+		goto out;
+	}
+#endif
 
 	length = -ENOMEM;
 	if (count >= PAGE_SIZE)
@@ -276,6 +289,15 @@ static ssize_t sel_write_disable(struct file *file, const char __user *buf,
 	char *page = NULL;
 	ssize_t length;
 	int new_value;
+
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) != &init_pid_ns) {
+		printk(KERN_WARNING "selinuxfs: %s: access denied for pid (%d) which "
+			"is not part of root namespaces\n", __func__, icurrent->pid);
+		length = -EACCES;
+		goto out;
+	}
+#endif
 
 	length = -ENOMEM;
 	if (count >= PAGE_SIZE)
@@ -505,6 +527,15 @@ static ssize_t sel_write_load(struct file *file, const char __user *buf,
 	ssize_t length;
 	void *data = NULL;
 
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) != &init_pid_ns) {
+		printk(KERN_WARNING "selinuxfs: %s: access denied for pid (%d) which "
+			"is not part of root namespaces\n", __func__, current->pid);
+		length = -EACCES;
+		goto out;
+	}
+#endif
+
 	mutex_lock(&sel_mutex);
 
 	length = task_has_security(current, SECURITY__LOAD_POLICY);
@@ -611,6 +642,15 @@ static ssize_t sel_write_checkreqprot(struct file *file, const char __user *buf,
 	char *page = NULL;
 	ssize_t length;
 	unsigned int new_value;
+
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) != &init_pid_ns) {
+		printk(KERN_WARNING "selinuxfs: %s: access denied for pid (%d) which "
+			"is not part of root namespaces\n", __func__, current->pid);
+		length = -EACCES;
+		goto out;
+	}
+#endif
 
 	length = task_has_security(current, SECURITY__SETCHECKREQPROT);
 	if (length)
