@@ -39,6 +39,7 @@ struct alarm {
 	enum alarmtimer_type	type;
 	int			state;
 	void			*data;
+	struct alarm_dev_ns     *alarm_ns;
 };
 
 void alarm_init(struct alarm *alarm, enum alarmtimer_type type,
