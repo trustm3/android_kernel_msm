@@ -51,6 +51,9 @@ static struct dentry *binder_debugfs_dir_entry_root;
 static struct dentry *binder_debugfs_dir_entry_proc;
 static struct workqueue_struct *binder_deferred_workqueue;
 
+struct binder_node	*shared_context_mgr_node;
+uid_t			shared_context_mgr_uid;
+
 struct binder_dev_ns {
 	struct binder_node	*context_mgr_node;
 	uid_t			context_mgr_uid;
@@ -1473,6 +1476,136 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 	}
 }
 
+enum {
+    /* Must match definitions in IBinder.h and IServiceManager.h */
+    PING_TRANSACTION  = B_PACK_CHARS('_','P','N','G'),
+    SVC_MGR_GET_SERVICE = 1,
+    SVC_MGR_CHECK_SERVICE,
+    SVC_MGR_ADD_SERVICE,
+    SVC_MGR_LIST_SERVICES,
+};
+
+struct binder_io
+{
+    char *data;            /* pointer to read/write from */
+    size_t *offs;   /* array of offsets */
+    size_t data_avail;     /* bytes available in data buffer */
+    size_t offs_avail;     /* entries available in offsets array */
+
+    char *data0;           /* start of data buffer */
+    size_t *offs0;  /* start of offsets buffer */
+};
+
+void bio_init_from_txn(struct binder_io *bio, struct binder_transaction_data *txn)
+{
+    bio->data = bio->data0 = (char *)txn->data.ptr.buffer;
+    bio->offs = bio->offs0 = (size_t *)txn->data.ptr.offsets;
+    bio->data_avail = txn->data_size;
+    bio->offs_avail = txn->offsets_size / sizeof(size_t);
+}
+
+static void *bio_get(struct binder_io *bio, size_t size)
+{
+    size = (size + 3) & (~3);
+
+    if (bio->data_avail < size){
+        bio->data_avail = 0;
+        return NULL;
+    }  else {
+        void *ptr = bio->data;
+        bio->data += size;
+        bio->data_avail -= size;
+        return ptr;
+    }
+}
+
+static uint32_t bio_get_uint32(struct binder_io *bio)
+{
+    uint32_t *ptr = bio_get(bio, sizeof(*ptr));
+    return ptr ? *ptr : 0;
+}
+
+static uint16_t *bio_get_string16(struct binder_io *bio, size_t *sz)
+{
+    size_t len;
+
+    /* Note: The payload will carry 32bit size instead of size_t */
+    len = (size_t) bio_get_uint32(bio);
+    if (sz)
+        *sz = len;
+    return bio_get(bio, (len + 1) * sizeof(uint16_t));
+}
+
+const char *str8(const uint16_t *x, size_t x_len)
+{
+    static char buf[128];
+    size_t max = 127;
+    char *p = buf;
+
+    if (x_len < max) {
+        max = x_len;
+    }
+
+    if (x) {
+        while ((max > 0) && (*x != '\0')) {
+            *p++ = *x++;
+            max--;
+        }
+    }
+    *p++ = 0;
+    return buf;
+}
+
+/* should in fact be uint16_t, but this makes it easier... */
+static char *shared_services[] = {
+	"media.audio_flinger",
+	"media.audio_policy",
+	NULL,
+};
+
+static bool service_in_shared_list(const char *svc, size_t len)
+{
+	char **entry = shared_services;
+
+	while (*entry) {
+		if (!strncmp(svc, *entry, len)) {
+			return true;
+		}
+		entry++;
+	}
+
+	return false;
+}
+
+static bool service_is_shared(struct binder_transaction_data *tr) {
+
+	struct binder_io bio;
+	uint16_t *service_string;
+	size_t len;
+
+	//print_hex_dump(KERN_ERR, "tr to context manager: ", DUMP_PREFIX_ADDRESS, 16, 1, tr, sizeof(*tr), true);
+	//print_hex_dump(KERN_ERR, "tr->data.ptr.buffer: ", DUMP_PREFIX_ADDRESS, 16, 1, tr->data.ptr.buffer, tr->data_size, true);
+	//print_hex_dump(KERN_ERR, "tr->data.ptr.offsets: ", DUMP_PREFIX_ADDRESS, 16, 1, tr->data.ptr.offsets, tr->offsets_size, true);
+	if ((tr->code == SVC_MGR_GET_SERVICE ||
+				tr->code == SVC_MGR_CHECK_SERVICE)) {
+		/* check the tr->data if it requests a
+		 * service on the shared services list */
+		bio_init_from_txn(&bio, tr);
+		/* pop first fields of the data; we don't care
+		 * about them */
+		bio_get_uint32(&bio);
+		bio_get_string16(&bio, &len);
+		service_string = bio_get_string16(&bio, &len);
+		//printk("service requested: %s\n", str8(service_string, len));
+		if (service_in_shared_list(str8(service_string, len), len)) {
+			printk("sharing service: %s\n", str8(service_string, len));
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static void binder_transaction(struct binder_proc *proc,
 			       struct binder_thread *thread,
 			       struct binder_transaction_data *tr, int reply)
@@ -1553,7 +1686,11 @@ static void binder_transaction(struct binder_proc *proc,
 			}
 			target_node = ref->node;
 		} else {
-			target_node = proc->binder_ns->context_mgr_node;
+			if (service_is_shared(tr)) {
+				target_node = shared_context_mgr_node;
+			}
+			if (target_node == NULL)
+				target_node = proc->binder_ns->context_mgr_node;
 			if (target_node == NULL) {
 				return_error = BR_DEAD_REPLY;
 				goto err_no_context_mgr_node;
@@ -2897,6 +3034,14 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		proc->binder_ns->context_mgr_node->local_strong_refs++;
 		proc->binder_ns->context_mgr_node->has_strong_ref = 1;
 		proc->binder_ns->context_mgr_node->has_weak_ref = 1;
+		/* The first namespace to register a context manager becomes the
+		 * shared context manager automatically */
+		if (!shared_context_mgr_node) {
+			shared_context_mgr_node =
+				proc->binder_ns->context_mgr_node;
+			shared_context_mgr_uid =
+				proc->binder_ns->context_mgr_uid;
+		}
 		break;
 	case BINDER_THREAD_EXIT:
 		binder_debug(BINDER_DEBUG_THREADS, "binder: %d:%d exit\n",
@@ -3155,6 +3300,10 @@ static void binder_deferred_release(struct binder_proc *proc)
 	hlist_del(&proc->proc_node);
 	if (proc->binder_ns->context_mgr_node &&
 	    proc->binder_ns->context_mgr_node->proc == proc) {
+		if (shared_context_mgr_node ==
+				proc->binder_ns->context_mgr_node) {
+			shared_context_mgr_node = NULL;
+		}
 		binder_debug(BINDER_DEBUG_DEAD_BINDER,
 			     "binder_release: %d context_mgr_node gone\n",
 			     proc->pid);
