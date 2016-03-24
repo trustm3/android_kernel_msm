@@ -194,7 +194,7 @@ static int trustme_task_decision(struct task_struct *actor, struct task_struct *
 
 	/* prevent communication etc. over container boundaries */
 	if (task_active_pid_ns(actor) != task_active_pid_ns(target)) {
-		printk(KERN_INFO "trustme-lsm: deny inter-container communication from %s to %s", actor->comm, target->comm);
+		printk(KERN_INFO "trustme-lsm: deny inter-container communication from %s to %s\n", actor->comm, target->comm);
 		return -1;
 	}
 
@@ -335,17 +335,20 @@ static int trustme_binder_transaction(struct task_struct *from, struct task_stru
 	//printk(KERN_INFO "binder transaction: from: %s to: %s", from->comm, to->comm);
 
 	/* prevent binder transactions over container boundaries */
-	return trustme_task_decision(from, to);
+	//return trustme_task_decision(from, to);
+	return 0;
 }
 
 static int trustme_binder_transfer_binder(struct task_struct *from, struct task_struct *to)
 {
-	return trustme_task_decision(from, to);
+	//return trustme_task_decision(from, to);
+	return 0;
 }
 
 static int trustme_binder_transfer_file(struct task_struct *from, struct task_struct *to, struct file *file)
 {
-	return trustme_task_decision(from, to);
+	//return trustme_task_decision(from, to);
+	return 0;
 }
 
 /*************************************
