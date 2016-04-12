@@ -31,21 +31,6 @@
 #include "base.h"
 #include "power/power.h"
 
-struct dev_namespace init_dev_ns = {
-	.active = true,
-	.count = ATOMIC_INIT(2),  /* extra reference for active_dev_ns */
-	.pid_ns = &init_pid_ns,
-	.tag = { 'i', 'n', 'i', 't', 0 },
-	.notifiers = BLOCKING_NOTIFIER_INIT(init_dev_ns.notifiers),
-	.timestamp = 0,
-	.mutex = __MUTEX_INITIALIZER(init_dev_ns.mutex),
-	.info = { NULL },
-};
-EXPORT_SYMBOL_GPL(init_dev_ns);
-
-struct dev_namespace *active_dev_ns = &init_dev_ns;
-EXPORT_SYMBOL_GPL(active_dev_ns);
-
 #ifdef CONFIG_SYSFS_DEPRECATED
 #ifdef CONFIG_SYSFS_DEPRECATED_V2
 long sysfs_deprecated = 1;
