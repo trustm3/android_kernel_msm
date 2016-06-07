@@ -91,6 +91,16 @@ static char *trustme_path_whitelist[] = {
 	"/sbin*",
 	"/acct*",
 
+	/* gnu userland */
+	"/bin*",
+	"/etc*",
+	"/home*",
+	"/lib*",
+	"/run*",
+	"/root*",
+	"/usr*",
+	"/var*",
+
 	/* sysfs stuff */
 	"/sys",
 	"/sys/kernel*",
