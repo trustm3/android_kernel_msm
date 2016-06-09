@@ -186,39 +186,28 @@ static void pft_inode_free_security(struct inode *inode)
 	kzfree(inode->i_security);
 }
 
-static struct security_operations pft_security_ops = {
-	.name			= "pft",
+static struct security_hook_list pft_hooks[] = {
+	LSM_HOOK_INIT(inode_create, pft_inode_create),
+	LSM_HOOK_INIT(inode_post_create, pft_inode_post_create),
+	LSM_HOOK_INIT(inode_unlink, pft_inode_unlink),
+	LSM_HOOK_INIT(inode_mknod, pft_inode_mknod),
+	LSM_HOOK_INIT(inode_rename, pft_inode_rename),
+	LSM_HOOK_INIT(inode_setxattr, pft_inode_set_xattr),
+	LSM_HOOK_INIT(inode_alloc_security, pft_inode_alloc_security),
+	LSM_HOOK_INIT(inode_free_security, pft_inode_free_security),
 
-	.inode_create		= pft_inode_create,
-	.inode_post_create	= pft_inode_post_create,
-	.inode_unlink		= pft_inode_unlink,
-	.inode_mknod		= pft_inode_mknod,
-	.inode_rename		= pft_inode_rename,
-	.inode_setxattr		= pft_inode_set_xattr,
-	.inode_alloc_security	= pft_inode_alloc_security,
-	.inode_free_security	= pft_inode_free_security,
+	LSM_HOOK_INIT(file_open, pft_file_open),
+	LSM_HOOK_INIT(file_permission, pft_file_permission),
+	LSM_HOOK_INIT(file_close, pft_file_close),
 
-	.file_open		= pft_file_open,
-	.file_permission	= pft_file_permission,
-	.file_close		= pft_file_close,
-
-	.allow_merge_bio	= pft_allow_merge_bio,
+	LSM_HOOK_INIT(allow_merge_bio, pft_allow_merge_bio),
 };
 
 static int __init pft_lsm_init(struct pft_device *dev)
 {
-	int ret;
-
 	/* Check if PFT is the chosen lsm via security_module_enable() */
-	if (security_module_enable(&pft_security_ops)) {
-		/* replace null callbacks with empty callbacks */
-		security_fixup_ops(&pft_security_ops);
-
-		ret = register_security(&pft_security_ops);
-		if (ret) {
-			pr_err("pft lsm registeration failed, ret=%d.\n", ret);
-			return 0;
-		}
+	if (security_module_enable("pft")) {
+		security_add_hooks(pft_hooks, ARRAY_SIZE(pft_hooks));
 		dev->is_chosen_lsm = true;
 		pr_debug("pft is the chosen lsm, registered sucessfully !\n");
 	} else {
