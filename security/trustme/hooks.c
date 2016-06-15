@@ -69,6 +69,8 @@ static struct mount_whitelist_entry mount_whitelist[] = {
 	{"/mnt/shell/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND, "*"},
 	/* Allow container bind mounts inside the emulated storage folder */
 	{"/storage/emulated*", "/storage/emulated*", "*", MS_BIND, MS_BIND, "*"},
+	/* Android 6 emulated storgae mounts */
+	{"/mnt*", "/storage*", "*", MS_BIND, MS_BIND, "*"},
 
 	/* Example: Allow all kinds of bind mounts */
 	//{"*", "*", "*", MS_BIND, MS_BIND, "*"},
