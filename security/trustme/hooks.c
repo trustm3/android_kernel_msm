@@ -647,11 +647,11 @@ int trustme_socket_create(int family, int type, int protocol, int kern)
 	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
 		return 0;
 
-	if (family == AF_NETLINK && protocol == NETLINK_KOBJECT_UEVENT) {
-		printk(KERN_INFO "trustme-lsm: preventing container process %s from opening netlink uevent socket",
-				current->comm);
-		return -1;
-	}
+	//if (family == AF_NETLINK && protocol == NETLINK_KOBJECT_UEVENT) {
+	//	printk(KERN_INFO "trustme-lsm: preventing container process %s from opening netlink uevent socket",
+	//			current->comm);
+	//	return -1;
+	//}
 
 	return 0;
 }
