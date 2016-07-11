@@ -248,7 +248,7 @@ struct iattr {
  * Maximum number of layers of fs stack.  Needs to be limited to
  * prevent kernel stack overflow
  */
-#define FILESYSTEM_MAX_STACK_DEPTH 2
+#define FILESYSTEM_MAX_STACK_DEPTH 8
 
 /** 
  * enum positive_aop_returns - aop return codes with specific semantics
