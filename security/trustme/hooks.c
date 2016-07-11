@@ -272,7 +272,7 @@ static int trustme_path_decision(struct path *path)
 	}
 
 out:
-	printk(KERN_INFO "trustme-lsm: denying container access to %s\n", p);
+	printk(KERN_INFO "trustme-lsm: denying container access to %s on fstype %s\n", p, path->mnt->mnt_sb->s_type->name);
 	kfree(buf);
 	return -1;
 }
