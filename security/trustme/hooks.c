@@ -90,6 +90,7 @@ static char *trustme_path_whitelist[] = {
 	"/storage*",
 	"/sbin*",
 	"/acct*",
+	"/factory*",
 
 	/* gnu userland */
 	"/bin*",
