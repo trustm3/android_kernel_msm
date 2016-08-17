@@ -94,6 +94,7 @@ static char *trustme_path_whitelist[] = {
 	"/storage*",
 	"/sbin*",
 	"/acct*",
+	"/factory*",
 
 	/* sysfs stuff */
 	"/sys",
