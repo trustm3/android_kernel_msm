@@ -384,7 +384,7 @@ static void trustme_sb_printflags(unsigned long flags)
 	if(flags & MS_NOUSER) printk(" MS_NOUSER");
 }
 
-static bool trustme_strings_match(char *rule, char *str)
+static bool trustme_strings_match(char *rule, const char *str)
 {
 	int rule_len;
 
@@ -407,8 +407,8 @@ static bool trustme_strings_match(char *rule, char *str)
 	return false;
 }
 
-static int trustme_sb_mount(char *dev_name, struct path *path,
-                     char *type, unsigned long flags, void *data)
+static int trustme_sb_mount(const char *dev_name, struct path *path,
+                     const char *type, unsigned long flags, void *data)
 {
 	char *buf = NULL;
 	char *p;
