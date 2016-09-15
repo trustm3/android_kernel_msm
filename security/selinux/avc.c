@@ -1027,6 +1027,11 @@ int avc_has_extended_perms(u32 ssid, u32 tsid, u16 tclass, u32 requested,
 	xp_node = &local_xp_node;
 	BUG_ON(!requested);
 
+#ifdef CONFIG_SECURITY_TRUSTME
+	if (task_active_pid_ns(current) == &init_pid_ns)
+		return 0;
+#endif
+
 	rcu_read_lock();
 
 	node = avc_lookup(ssid, tsid, tclass);
