@@ -778,6 +778,10 @@ out:
 
 	if (!selinux_enforcing)
 		return 0;
+#ifdef CONFIG_SECURITY_TRUSTME
+        if (task_active_pid_ns(current) == &init_pid_ns)
+                return 0;
+#endif
 	return -EPERM;
 }
 
