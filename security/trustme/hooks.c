@@ -312,11 +312,15 @@ out:
 
 static int trustme_android_alarm_set_rtc(void)
 {
+#ifdef CONFIG_SECURITY_TRUSTME_DISABLE_RTC_CHECK
+	return 0;
+#else
 	if (trustme_pidns_is_privileged(task_active_pid_ns(current)))
 		return 0;
 
 	printk(KERN_INFO "trustme-lsm: denying unprivileged container to set rtc\n");
 	return -1;
+#endif
 }
 
 /*************************************
