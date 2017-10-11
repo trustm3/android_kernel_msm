@@ -7,3 +7,13 @@ config SECURITY_TRUSTME
 	  This selects the trustme LSM used for enforcing container separation.
 
 	  If you are unsure how to answer this question, answer N.
+
+config SECURITY_TRUSTME_DISABLE_RTC_CHECK
+	bool "trustme LSM disable rtc check"
+	depends on SECURITY_TRUSTME
+	select SECURITY_PATH
+	default y
+	help
+	  This disables the rtc check, which only allows a privileged container to set the rtc system clock.
+
+	  If you are unsure how to answer this question, answer N.
