@@ -116,7 +116,8 @@ static void alarm_ns_initialize(struct alarm_dev_ns *alarm_ns)
 {
 	int i;
 
-	alarm_ns->alarm_slock = __SPIN_LOCK_UNLOCKED(alarm_ns->alarm_slock);
+	spin_lock_init(&alarm_ns->alarm_slock);
+	mutex_init(&alarm_ns->alarm_mutex);
 	init_waitqueue_head(&alarm_ns->alarm_wait_queue);
 
 	alarm_ns->alarm_pending = 0;
@@ -140,6 +141,10 @@ static void alarm_ns_initialize(struct alarm_dev_ns *alarm_ns)
 		alarm_ns->alarms[i].type = i;
 		if (!is_wakeup(i))
 			alarm_ns->alarms[i].u.hrt.function = devalarm_hrthandler;
+		if (&alarm_ns->alarms[i].u.alrm)
+			alarm_ns->alarms[i].u.alrm.alarm_ns = alarm_ns;
+		if (&alarm_ns->alarms[i].u.hrt)
+			alarm_ns->alarms[i].u.hrt.alarm_ns = alarm_ns;
 	}
 
 #ifdef CONFIG_DEV_NS
@@ -169,6 +174,7 @@ static struct dev_ns_info *alarm_ns_create(struct dev_namespace *dev_ns)
 	if (!alarm_ns)
 		return ERR_PTR(-ENOMEM);
 
+	alarm_dbg(IO, "alarm_ns create (dev_ns %p)", alarm_ns);
 	alarm_ns_initialize(alarm_ns);
 
 	return &alarm_ns->dev_ns_info;

@@ -116,6 +116,7 @@ struct hrtimer {
 	void				*start_site;
 	char				start_comm[16];
 #endif
+	struct alarm_dev_ns		*alarm_ns;
 };
 
 /**
