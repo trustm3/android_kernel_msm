@@ -728,8 +728,6 @@ struct input_keymap_entry {
 #define BTN_DPAD_LEFT		0x222
 #define BTN_DPAD_RIGHT		0x223
 
-#define KEY_POWER_INJECT	0x224
-
 #define KEY_ALS_TOGGLE		0x230	/* Ambient light sensor */
 
 #define KEY_BUTTONCONFIG		0x240	/* AL Button Configuration */
@@ -742,6 +740,8 @@ struct input_keymap_entry {
 
 #define KEY_BRIGHTNESS_MIN		0x250	/* Set Brightness to Minimum */
 #define KEY_BRIGHTNESS_MAX		0x251	/* Set Brightness to Maximum */
+
+#define KEY_POWER_INJECT	0x2a0
 
 #define BTN_TRIGGER_HAPPY		0x2c0
 #define BTN_TRIGGER_HAPPY1		0x2c0
