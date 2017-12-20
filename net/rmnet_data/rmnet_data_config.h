@@ -118,8 +118,8 @@ int rmnet_get_logical_endpoint_config(struct net_device *dev,
 void rmnet_config_netlink_msg_handler (struct sk_buff *skb);
 int rmnet_config_notify_cb(struct notifier_block *nb,
 				  unsigned long event, void *data);
-int rmnet_create_vnd(int id);
-int rmnet_create_vnd_prefix(int id, const char *name);
+int rmnet_create_vnd(struct net *net, int id);
+int rmnet_create_vnd_prefix(struct net *net, int id, const char *name);
 int rmnet_free_vnd(int id);
 
 #endif /* _RMNET_DATA_CONFIG_H_ */

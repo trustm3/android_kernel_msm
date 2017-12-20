@@ -15,6 +15,7 @@
  */
 
 #include <net/sock.h>
+#include <net/net_namespace.h>
 #include <linux/module.h>
 #include <linux/netlink.h>
 #include <linux/netdevice.h>
@@ -30,7 +31,6 @@
 RMNET_LOG_MODULE(RMNET_DATA_LOGMASK_CONFIG);
 
 /* ***************** Local Definitions and Declarations ********************* */
-static struct sock *nl_socket_handle;
 
 #ifndef RMNET_KERNEL_PRE_3_8
 static struct netlink_kernel_cfg rmnet_netlink_cfg = {
@@ -54,9 +54,9 @@ struct rmnet_free_vnd_work {
 /* ***************** Init and Cleanup *************************************** */
 
 #ifdef RMNET_KERNEL_PRE_3_8
-static struct sock *_rmnet_config_start_netlink(void)
+static struct sock *_rmnet_config_start_netlink(struct net *net)
 {
-	return netlink_kernel_create(&init_net,
+	return netlink_kernel_create(net,
 				     RMNET_NETLINK_PROTO,
 				     0,
 				     rmnet_config_netlink_msg_handler,
@@ -64,13 +64,36 @@ static struct sock *_rmnet_config_start_netlink(void)
 				     THIS_MODULE);
 }
 #else
-static struct sock *_rmnet_config_start_netlink(void)
+static struct sock *_rmnet_config_start_netlink(struct net *net)
 {
-	return netlink_kernel_create(&init_net,
+	return netlink_kernel_create(net,
 				     RMNET_NETLINK_PROTO,
 				     &rmnet_netlink_cfg);
 }
 #endif /* RMNET_KERNEL_PRE_3_8 */
+
+static int __net_init rmnet_data_config_net_init(struct net *net)
+{
+	struct sock *nl_socket_handle;
+	nl_socket_handle = _rmnet_config_start_netlink(net);
+	if (!nl_socket_handle) {
+		LOGE("%s", "Failed to init netlink socket");
+		return RMNET_INIT_ERROR;
+	}
+	net->rmnet_nl = nl_socket_handle;
+	return 0;
+}
+
+static void __net_exit rmnet_data_config_net_exit(struct net *net)
+{
+	netlink_kernel_release(net->rmnet_nl);
+	net->rmnet_nl = NULL;
+}
+
+static struct pernet_operations rmnet_data_config_net_ops = {
+	.init = rmnet_data_config_net_init,
+	.exit = rmnet_data_config_net_exit,
+};
 
 /**
  * rmnet_config_init() - Startup init
@@ -81,11 +104,9 @@ static struct sock *_rmnet_config_start_netlink(void)
 int rmnet_config_init(void)
 {
 	int rc;
-	nl_socket_handle = _rmnet_config_start_netlink();
-	if (!nl_socket_handle) {
-		LOGE("%s", "Failed to init netlink socket");
-		return RMNET_INIT_ERROR;
-	}
+
+	if (register_pernet_subsys(&rmnet_data_config_net_ops))
+		panic("rmnet_config_netlink_init: cannot initialize rmnet config netlink\n");
 
 	rc = register_netdevice_notifier(&rmnet_dev_notifier);
 	if (rc != 0) {
@@ -103,11 +124,11 @@ int rmnet_config_init(void)
 void rmnet_config_exit(void)
 {
 	int rc;
-	netlink_kernel_release(nl_socket_handle);
 	rc = unregister_netdevice_notifier(&rmnet_dev_notifier);
 	if (rc != 0)
 		LOGE("Failed to unregister device notifier; rc=%d", rc);
 }
+
 
 /* ***************** Helper Functions *************************************** */
 
@@ -190,14 +211,15 @@ struct rmnet_logical_ep_conf_s *_rmnet_get_logical_ep(struct net_device *dev,
 		} while (0)
 
 static void _rmnet_netlink_set_link_egress_data_format
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
 	_RMNET_NETLINK_NULL_CHECKS();
 
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
-	dev = dev_get_by_name(&init_net, rmnet_header->data_format.dev);
+	dev = dev_get_by_name(net, rmnet_header->data_format.dev);
 
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
@@ -214,7 +236,8 @@ static void _rmnet_netlink_set_link_egress_data_format
 }
 
 static void _rmnet_netlink_set_link_ingress_data_format
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
@@ -222,7 +245,7 @@ static void _rmnet_netlink_set_link_ingress_data_format
 
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 
-	dev = dev_get_by_name(&init_net, rmnet_header->data_format.dev);
+	dev = dev_get_by_name(net, rmnet_header->data_format.dev);
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
 		return;
@@ -236,7 +259,8 @@ static void _rmnet_netlink_set_link_ingress_data_format
 }
 
 static void _rmnet_netlink_set_logical_ep_config
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev, *dev2;
@@ -249,10 +273,10 @@ static void _rmnet_netlink_set_logical_ep_config
 		return;
 	}
 
-	dev = dev_get_by_name(&init_net,
+	dev = dev_get_by_name(net,
 				rmnet_header->local_ep_config.dev);
 
-	dev2 = dev_get_by_name(&init_net,
+	dev2 = dev_get_by_name(net,
 				rmnet_header->local_ep_config.next_dev);
 
 
@@ -273,7 +297,8 @@ static void _rmnet_netlink_set_logical_ep_config
 }
 
 static void _rmnet_netlink_unset_logical_ep_config
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
@@ -286,7 +311,7 @@ static void _rmnet_netlink_unset_logical_ep_config
 		return;
 	}
 
-	dev = dev_get_by_name(&init_net,
+	dev = dev_get_by_name(net,
 				rmnet_header->local_ep_config.dev);
 
 	if (dev) {
@@ -301,7 +326,8 @@ static void _rmnet_netlink_unset_logical_ep_config
 }
 
 static void _rmnet_netlink_get_logical_ep_config
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
@@ -314,7 +340,7 @@ static void _rmnet_netlink_get_logical_ep_config
 		return;
 	}
 
-	dev = dev_get_by_name(&init_net,
+	dev = dev_get_by_name(net,
 				rmnet_header->local_ep_config.dev);
 
 	if (dev)
@@ -339,14 +365,15 @@ static void _rmnet_netlink_get_logical_ep_config
 }
 
 static void _rmnet_netlink_associate_network_device
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
 	_RMNET_NETLINK_NULL_CHECKS();
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 
-	dev = dev_get_by_name(&init_net, rmnet_header->data);
+	dev = dev_get_by_name(net, rmnet_header->data);
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
 		return;
@@ -357,14 +384,15 @@ static void _rmnet_netlink_associate_network_device
 }
 
 static void _rmnet_netlink_unassociate_network_device
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
 	_RMNET_NETLINK_NULL_CHECKS();
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 
-	dev = dev_get_by_name(&init_net, rmnet_header->data);
+	dev = dev_get_by_name(net, rmnet_header->data);
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
 		return;
@@ -375,7 +403,8 @@ static void _rmnet_netlink_unassociate_network_device
 }
 
 static void _rmnet_netlink_get_network_device_associated
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
@@ -383,7 +412,7 @@ static void _rmnet_netlink_get_network_device_associated
 	_RMNET_NETLINK_NULL_CHECKS();
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 
-	dev = dev_get_by_name(&init_net, rmnet_header->data);
+	dev = dev_get_by_name(net, rmnet_header->data);
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
 		return;
@@ -395,7 +424,8 @@ static void _rmnet_netlink_get_network_device_associated
 }
 
 static void _rmnet_netlink_get_link_egress_data_format
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
@@ -404,7 +434,7 @@ static void _rmnet_netlink_get_link_egress_data_format
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 
 
-	dev = dev_get_by_name(&init_net, rmnet_header->data_format.dev);
+	dev = dev_get_by_name(net, rmnet_header->data_format.dev);
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
 		return;
@@ -427,7 +457,8 @@ static void _rmnet_netlink_get_link_egress_data_format
 }
 
 static void _rmnet_netlink_get_link_ingress_data_format
-					(struct rmnet_nl_msg_s *rmnet_header,
+					(struct net *net,
+					 struct rmnet_nl_msg_s *rmnet_header,
 					 struct rmnet_nl_msg_s *resp_rmnet)
 {
 	struct net_device *dev;
@@ -436,7 +467,7 @@ static void _rmnet_netlink_get_link_ingress_data_format
 	resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 
 
-	dev = dev_get_by_name(&init_net, rmnet_header->data_format.dev);
+	dev = dev_get_by_name(net, rmnet_header->data_format.dev);
 	if (!dev) {
 		resp_rmnet->return_code = RMNET_CONFIG_NO_SUCH_DEVICE;
 		return;
@@ -521,6 +552,7 @@ static void _rmnet_netlink_add_del_vnd_tc_flow
  */
 void rmnet_config_netlink_msg_handler(struct sk_buff *skb)
 {
+	struct net *net = sock_net(skb->sk);
 	struct nlmsghdr *nlmsg_header, *resp_nlmsg;
 	struct rmnet_nl_msg_s *rmnet_header, *resp_rmnet;
 	int return_pid, response_data_length;
@@ -569,61 +601,62 @@ void rmnet_config_netlink_msg_handler(struct sk_buff *skb)
 	switch (rmnet_header->message_type) {
 	case RMNET_NETLINK_ASSOCIATE_NETWORK_DEVICE:
 		_rmnet_netlink_associate_network_device
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_UNASSOCIATE_NETWORK_DEVICE:
 		_rmnet_netlink_unassociate_network_device
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_GET_NETWORK_DEVICE_ASSOCIATED:
 		_rmnet_netlink_get_network_device_associated
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_SET_LINK_EGRESS_DATA_FORMAT:
 		_rmnet_netlink_set_link_egress_data_format
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_GET_LINK_EGRESS_DATA_FORMAT:
 		_rmnet_netlink_get_link_egress_data_format
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_SET_LINK_INGRESS_DATA_FORMAT:
 		_rmnet_netlink_set_link_ingress_data_format
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_GET_LINK_INGRESS_DATA_FORMAT:
 		_rmnet_netlink_get_link_ingress_data_format
-						(rmnet_header, resp_rmnet);
+						(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_SET_LOGICAL_EP_CONFIG:
-		_rmnet_netlink_set_logical_ep_config(rmnet_header, resp_rmnet);
+		_rmnet_netlink_set_logical_ep_config(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_UNSET_LOGICAL_EP_CONFIG:
-		_rmnet_netlink_unset_logical_ep_config(rmnet_header,
+		_rmnet_netlink_unset_logical_ep_config(net, rmnet_header,
 						       resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_GET_LOGICAL_EP_CONFIG:
-		_rmnet_netlink_get_logical_ep_config(rmnet_header, resp_rmnet);
+		_rmnet_netlink_get_logical_ep_config(net, rmnet_header, resp_rmnet);
 		break;
 
 	case RMNET_NETLINK_NEW_VND:
 		resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 		resp_rmnet->return_code =
-					 rmnet_create_vnd(rmnet_header->vnd.id);
+					 rmnet_create_vnd(net, rmnet_header->vnd.id);
 		break;
 
 	case RMNET_NETLINK_NEW_VND_WITH_PREFIX:
 		resp_rmnet->crd = RMNET_NETLINK_MSG_RETURNCODE;
 		resp_rmnet->return_code = rmnet_create_vnd_prefix(
+						net,
 						rmnet_header->vnd.id,
 						rmnet_header->vnd.vnd_name);
 		break;
@@ -655,7 +688,7 @@ void rmnet_config_netlink_msg_handler(struct sk_buff *skb)
 		break;
 	}
 	rtnl_unlock();
-	nlmsg_unicast(nl_socket_handle, skb_response, return_pid);
+	nlmsg_unicast(net->rmnet_nl, skb_response, return_pid);
 	LOGD("%s", "Done processing command");
 
 }
@@ -1065,12 +1098,12 @@ int rmnet_get_logical_endpoint_config(struct net_device *dev,
  * Return:
  *      - result of rmnet_vnd_create_dev()
  */
-int rmnet_create_vnd(int id)
+int rmnet_create_vnd(struct net *net, int id)
 {
 	struct net_device *dev;
 	ASSERT_RTNL();
 	LOGL("(%d);", id);
-	return rmnet_vnd_create_dev(id, &dev, NULL);
+	return rmnet_vnd_create_dev(net, id, &dev, NULL);
 }
 
 /**
@@ -1081,12 +1114,12 @@ int rmnet_create_vnd(int id)
  * Return:
  *      - result of rmnet_vnd_create_dev()
  */
-int rmnet_create_vnd_prefix(int id, const char *prefix)
+int rmnet_create_vnd_prefix(struct net *net, int id, const char *prefix)
 {
 	struct net_device *dev;
 	ASSERT_RTNL();
 	LOGL("(%d, \"%s\");", id, prefix);
-	return rmnet_vnd_create_dev(id, &dev, prefix);
+	return rmnet_vnd_create_dev(net, id, &dev, prefix);
 }
 
 /**

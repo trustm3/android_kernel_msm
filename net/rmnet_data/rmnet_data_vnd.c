@@ -555,7 +555,7 @@ int rmnet_vnd_init(void)
  *      - RMNET_CONFIG_NOMEM if net_device allocation failed
  *      - RMNET_CONFIG_UNKNOWN_ERROR if register_netdevice() fails
  */
-int rmnet_vnd_create_dev(int id, struct net_device **new_device,
+int rmnet_vnd_create_dev(struct net *net, int id, struct net_device **new_device,
 			 const char *prefix)
 {
 	struct net_device *dev;
@@ -598,6 +598,7 @@ int rmnet_vnd_create_dev(int id, struct net_device **new_device,
 			NETIF_F_IPV6_UDP_CSUM;
 	}
 
+	dev_net_set(dev, net);
 	rc = register_netdevice(dev);
 	if (rc != 0) {
 		LOGE("Failed to to register netdev [%s]", dev->name);

@@ -119,6 +119,9 @@ struct net {
 	struct netns_ipvs	*ipvs;
 	struct sock		*diag_nlsk;
 	atomic_t		rt_genid;
+#ifdef CONFIG_RMNET_DATA
+	struct sock 		*rmnet_nl; /* rmnet data config netlink socket */
+#endif
 };
 
 #include <linux/seq_file_net.h>
