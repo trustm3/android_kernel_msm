@@ -343,9 +343,12 @@ struct vfs_cap_data {
 
 #define CAP_BLOCK_SUSPEND    36
 
+/* Backport Android 7.0 compat */
+#define CAP_AUDIT_READ       37
+
 /* Allow mounts and unmounts and the creation of mount namespaces
  * Does NOT allow pivot_root, move mounts and setns for mount namespaces */
-#define CAP_SYS_MOUNT                  37
+#define CAP_SYS_MOUNT                  38
 
 #define CAP_LAST_CAP         CAP_SYS_MOUNT
 

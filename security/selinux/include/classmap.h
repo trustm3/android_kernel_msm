@@ -147,7 +147,7 @@ struct security_class_mapping secclass_map[] = {
 	{ "peer", { "recv", NULL } },
 	{ "capability2",
 	  { "mac_override", "mac_admin", "syslog", "wake_alarm", "block_suspend",
-	    "sys_mount", NULL } },
+	    "audit_read", "sys_mount", NULL } },
 	{ "kernel_service", { "use_as_override", "create_files_as", NULL } },
 	{ "tun_socket",
 	  { COMMON_SOCK_PERMS, "attach_queue", NULL } },
