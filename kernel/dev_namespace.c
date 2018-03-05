@@ -284,6 +284,17 @@ static void del_dev_ns_info(int dev_ns_id, struct dev_ns_info *dev_ns_info)
 	put_dev_ns(dev_ns);
 }
 
+/*
+ * get_dev_ns_info() is intended for internal use only. It is exported only
+ * to enable the helper macros in dev_namepsace.h to work properly.
+ *
+ * @create tells whether to create a new instance if none is found already,
+ * or just return NULL.
+ *
+ * @lock tells whether the @dev_ns should be locked against concurrent
+ * changes, or the caller is the one responsible (in which case there is
+ * not even a need for an extra refefence count).
+ */
 struct dev_ns_info *get_dev_ns_info(int dev_ns_id,
 				    struct dev_namespace *dev_ns,
 				    int lock, int create)
@@ -300,7 +311,7 @@ struct dev_ns_info *get_dev_ns_info(int dev_ns_id,
 	if (!dev_ns_info && create)
 		dev_ns_info = new_dev_ns_info(dev_ns_id, dev_ns);
 
-	if (dev_ns_info) {
+	if (dev_ns_info && lock) {
 		pr_debug("dev_ns: [0x%p] get info 0x%p count %d+\n", dev_ns,
 			 dev_ns_info, atomic_read(&dev_ns_info->count));
 		atomic_inc(&dev_ns_info->count);
