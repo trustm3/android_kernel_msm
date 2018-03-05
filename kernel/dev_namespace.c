@@ -112,14 +112,15 @@ struct dev_namespace *copy_dev_ns(unsigned long flags,
 		return create_dev_ns(task);
 }
 
-#if defined(CONFIG_PM_WAKELOCK) || defined(CONFIG_USER_WAKELOCK)
+#if defined(CONFIG_PM_WAKELOCKS) || defined(CONFIG_USER_WAKELOCK)
 extern void destroy_wakelocks_in_dev_ns(struct dev_namespace *dev_ns);
 #endif
 
 void __put_dev_ns(struct dev_namespace *dev_ns)
 {
 	if (dev_ns) {
-#if defined(CONFIG_PM_WAKELOCK) || defined(CONFIG_USER_WAKELOCK)
+#if defined(CONFIG_PM_WAKELOCKS) || defined(CONFIG_USER_WAKELOCK)
+		pr_debug("dev_ns: [0x%p] destory all wakelocks\n", dev_ns);
 		destroy_wakelocks_in_dev_ns(dev_ns);
 #endif
 		put_pid_ns(dev_ns->pid_ns);
