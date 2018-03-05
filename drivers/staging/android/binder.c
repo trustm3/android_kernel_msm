@@ -3403,7 +3403,6 @@ static void binder_deferred_release(struct binder_proc *proc)
 		     __func__, proc->pid, threads, nodes, incoming_refs,
 		     outgoing_refs, active_transactions, buffers, page_count);
 
-	put_binder_ns(proc->binder_ns);
 	kfree(proc);
 }
 
@@ -3450,6 +3449,8 @@ static void binder_deferred_func(struct work_struct *work)
 		preempt_enable_no_resched();
 		if (files)
 			put_files_struct(files);
+		if (defer & BINDER_DEFERRED_RELEASE)
+			put_binder_ns(proc->binder_ns);
 	} while (proc);
 }
 static DECLARE_WORK(binder_deferred_work, binder_deferred_func);
